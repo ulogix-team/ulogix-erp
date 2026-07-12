@@ -82,10 +82,20 @@ python tools/bootstrap_odoo.py         # instala Compras si falta y crea:
   (`product.supplierinfo`: precio, MOQ, lead time).
 - **Listas de materiales** (`mrp.bom`) de los tres productos.
 
-**Flujo en operación:** la página *Órdenes (Odoo)* crea órdenes de compra
-reales (`purchase.order` en borrador → confirmar); el middleware, al completarse
-la producción vía UNS, **valida la recepción** (`stock.picking → button_validate`).
-Sin credenciales la suite opera en `dry-run` y registra todo en SQLite.
+**Flujo en operación:** la página *Órdenes (Odoo)* crea, por cada línea del
+plan MRP, un `purchase.order` de insumos (concentrados, etiquetas, tapas, ...)
+que **se confirma y se recibe de inmediato** (`button_confirm` →
+`stock.picking → button_validate`) — la suite no modela el lead time real del
+proveedor, así que el insumo queda disponible en inventario en el mismo paso.
+Junto con esa PO se crea **una orden de fabricación por producto y mes**
+(`mrp.production`, ligada a la `mrp.bom` del SKU creada por
+`bootstrap_odoo.py`), confirmada y con los componentes **reservados**
+(`action_assign`) contra ese stock recién recibido. El middleware, al
+completarse la producción real vía UNS, **valida la orden de fabricación**
+(`button_mark_done`): Odoo descuenta los componentes de la BOM y da entrada al
+producto terminado. `integrations.state_store.po_tracking` guarda el vínculo
+PO↔MO (`mo_id`/`mo_name`) para que el middleware sepa cuál validar. Sin
+credenciales la suite opera en `dry-run` y registra todo en SQLite.
 
 ---
 

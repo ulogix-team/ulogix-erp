@@ -1,7 +1,25 @@
-__pycache__/
-*.pyc
+# credenciales — NUNCA commitear
 .env
 config/google_service_account.json
-middleware/state.db*
+
+# base ERP y artefactos de corrida
+middleware/state.db
+middleware/state.db-*
 data/contabilidad_local.xlsx
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# sistema
+.DS_Store
+Thumbs.db
+
+# overrides personales de Claude Code
+CLAUDE.local.md
+.claude/settings.local.json
+
+# streamlit
 .streamlit/secrets.toml

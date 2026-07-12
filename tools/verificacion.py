@@ -84,7 +84,7 @@ def _sens():
     return f"margen base ${t.attrs['margen_base_cop']:,.0f}"
 
 
-@paso("7. Odoo dry-run (PO desde el plan)")
+@paso("7. Odoo dry-run (PO de insumos + MO desde el plan)")
 def _odoo():
     # QA de LOGICA, no de conectividad (eso vive en la pagina Pruebas):
     # se fuerza dry-run aunque haya credenciales reales en .env.
@@ -93,14 +93,17 @@ def _odoo():
     from integrations import state_store
     previo, settings.DRY_RUN_FORZADO = settings.DRY_RUN_FORZADO, True
     g = globals()["_plan"].iloc[0]
-    res = OdooClient().crear_orden_compra(
+    cli = OdooClient()
+    res = cli.crear_orden_compra(
         g["proveedor"], [LineaPedido(g["descripcion"], g["componente"],
                                      g["cantidad"], g["precio_unitario_cop"])],
-        "QA/VERIFICACION")
-    state_store.registrar_po(res["name"], g["producto"],
-                             qty_objetivo=100, proveedor=g["proveedor"])
+        "QA/VERIFICACION", confirmar=True, recibir=True)
+    mo = cli.crear_orden_fabricacion(g["producto"], 100, "QA/VERIFICACION-MO")
+    state_store.registrar_po(res["name"], g["producto"], qty_objetivo=100,
+                             proveedor=g["proveedor"], mo_id=mo.get("id"),
+                             mo_name=mo.get("name"), insumos_recibidos=True)
     settings.DRY_RUN_FORZADO = previo
-    return res["name"]
+    return f"{res['name']} -> {mo['name']}"
 
 
 @paso("8. Middleware MQTT (payload normal + estilo MES)")
@@ -116,9 +119,9 @@ def _mw():
     mw.manejar_mensaje(f"plant/{linea}/production", json.dumps({"sku": sku, "qty": 60}))
     done = mw.manejar_mensaje(f"plant/{linea}/production", json.dumps({"value": 40}))
     pos = state_store.listar_pos()
-    assert done and pos[0]["estado"] == "recibida_odoo", pos
+    assert done and pos[0]["estado"] == "recibida_odoo" and pos[0]["mo_name"], pos
     settings.DRY_RUN_FORZADO = previo
-    return f"{pos[0]['po_name']} -> recibida_odoo"
+    return f"{pos[0]['po_name']} -> recibida_odoo (MO {pos[0]['mo_name']})"
 
 
 @paso("9. Contabilidad (Sheets con fallback Excel)")

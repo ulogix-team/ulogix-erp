@@ -3,7 +3,8 @@ Middleware MQTT v4 — colgado del UNS FEMSA.
 
   Ignition/Node-RED/Tecnomatix ──► MQTT (UNS FEMSA/...) ──► [MIDDLEWARE]
                                                               ├─ SQLite ERP (kpi_uns, eventos, POs)
-                                                              ├─ Odoo API (recepcion de POs)
+                                                              ├─ Odoo API (valida la orden de
+                                                              │  fabricacion vinculada al SKU)
                                                               └─ publica rama ERP/ (retained)
 
 SUSCRIPCIONES (config/uns_femsa.yaml):
@@ -11,8 +12,16 @@ SUSCRIPCIONES (config/uns_femsa.yaml):
                               DT, MTTR, MTBF  => tabla kpi_uns
   FEMSA/+/MES/Maintance/#  -> MachineID, Last/NextMaintance, MaintanceStatus
   FEMSA/+/Process/#        -> hojas de conteo (GoodCount/Count/Produccion/value)
-                              => eventos_produccion + cumplimiento de POs
+                              => eventos_produccion + cumplimiento de POs/MOs
   plant/+/production       -> contrato legado v1 (compatibilidad)
+
+Cada PO de insumos (concentrados, etiquetas, tapas, ...) se recibe de
+inmediato al crearse desde la pagina *Ordenes Odoo* (para fines practicos, sin
+modelar el lead time real del proveedor) y queda vinculada a una orden de
+fabricacion (mrp.production) de la BOM del sku. Cuando el conteo de
+produccion real acumulado cubre la cantidad objetivo del lote, el middleware
+valida esa orden de fabricacion (button_mark_done): Odoo descuenta los
+componentes de la BOM y da entrada al producto terminado.
 
 PUBLICACION (la suite ES el ERP del UNS): al cambiar una PO o llegar
 produccion, se publica retained la rama FEMSA/LineaX/ERP/{OrderNumber,
@@ -70,12 +79,13 @@ class Middleware:
                                      else {"value": payload})
         completadas = state_store.acumular_produccion(sku, qty, linea)
         for po in completadas:
-            res = self.odoo.recibir_orden(po.get("odoo_id"), po["po_name"])
+            res = self.odoo.completar_orden_fabricacion(po.get("mo_id"), po.get("mo_name", ""))
             estado = "recibida_odoo" if res.get("ok") else "error"
             state_store.marcar_po(po["po_name"], estado,
                                   res.get("detalle", res.get("modo", "")))
             state_store.log("middleware", f"po_{estado}",
-                            f"{po['po_name']} cubierta por produccion de {sku}")
+                            f"{po['po_name']} cubierta por produccion de {sku} "
+                            f"(MO {po.get('mo_name') or '-'})")
         self.publicar_estado_erp(linea)
         return completadas
 

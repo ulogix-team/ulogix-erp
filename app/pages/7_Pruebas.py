@@ -123,6 +123,22 @@ with c2:
                        "puedes cancelarla desde Odoo.")
         else:
             st.error(res)
+c3, c4 = st.columns(2)
+with c3:
+    if st.button("▶ Crear orden de fabricacion de PRUEBA (P1, 1 unidad)"):
+        from integrations.odoo_client import OdooClient
+        res = OdooClient().crear_orden_fabricacion(
+            "P1-CC350-RGB", 1, referencia="PRUEBA-API-MO")
+        st.success(f"✅ MO creada en modo `{res.get('modo')}`: {res.get('name', res)}")
+        st.caption("Requiere haber corrido `tools/bootstrap_odoo.py` (crea la BOM de P1).")
+with c4:
+    if st.button("▶ Completar (validar) esa MO de PRUEBA"):
+        from integrations.odoo_client import OdooClient
+        cli = OdooClient()
+        res_mo = cli.crear_orden_fabricacion("P1-CC350-RGB", 1, referencia="PRUEBA-API-MO")
+        res = cli.completar_orden_fabricacion(res_mo.get("id"), res_mo.get("name", ""))
+        (st.success if res.get("ok") else st.error)(json.dumps(res, indent=1,
+                                                                ensure_ascii=False))
 st.caption("Para poblar Odoo desde cero (productos P1/P2/P3 con EAN-13, "
            "componentes, proveedores y listas de materiales): "
            "`python tools/bootstrap_odoo.py` — es idempotente.")

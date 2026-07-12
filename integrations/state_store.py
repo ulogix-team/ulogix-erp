@@ -5,9 +5,13 @@ escritor (middleware) + varios lectores (paginas del dashboard).
 
 Tablas:
 - eventos_produccion : cada mensaje MQTT de produccion recibido.
-- po_tracking        : ordenes de compra vinculadas a un SKU/linea con cantidad
-                       objetivo; el middleware acumula produccion y marca
-                       'cumplida' / 'recibida_odoo'.
+- po_tracking        : ordenes de compra de insumos (concentrados, etiquetas,
+                       tapas, ...) vinculadas a un SKU/linea con cantidad
+                       objetivo, y a la orden de fabricacion (mrp.production,
+                       columnas mo_id/mo_name) que consume esos insumos segun
+                       la BOM. El middleware acumula produccion real y marca
+                       'cumplida' / 'recibida_odoo' (esta ultima significa: la
+                       orden de fabricacion quedo validada en Odoo).
 - log_acciones       : auditoria (creaciones en Odoo, dry-runs, errores).
 """
 from __future__ import annotations
@@ -39,7 +43,9 @@ CREATE TABLE IF NOT EXISTS po_tracking (
     qty_producida REAL NOT NULL DEFAULT 0,
     estado TEXT NOT NULL DEFAULT 'abierta',  -- abierta|cumplida|recibida_odoo|error
     creado_ts TEXT NOT NULL, actualizado_ts TEXT NOT NULL,
-    detalle TEXT
+    detalle TEXT,
+    mo_id INTEGER, mo_name TEXT,             -- mrp.production vinculada (BOM del sku)
+    insumos_recibidos INTEGER NOT NULL DEFAULT 0  -- PO de insumos ya recibida en Odoo
 );
 CREATE TABLE IF NOT EXISTS log_acciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,6 +84,22 @@ def _ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+_COLUMNAS_NUEVAS_PO_TRACKING = {
+    "mo_id": "INTEGER",
+    "mo_name": "TEXT",
+    "insumos_recibidos": "INTEGER NOT NULL DEFAULT 0",
+}
+
+
+def _migrar(con: sqlite3.Connection) -> None:
+    """Anade columnas nuevas a bases existentes (ALTER TABLE es idempotente
+    via PRAGMA table_info; una base creada de cero ya las trae del _SCHEMA)."""
+    existentes = {r["name"] for r in con.execute("PRAGMA table_info(po_tracking)")}
+    for col, tipo in _COLUMNAS_NUEVAS_PO_TRACKING.items():
+        if col not in existentes:
+            con.execute(f"ALTER TABLE po_tracking ADD COLUMN {col} {tipo}")
+
+
 @contextmanager
 def conexion():
     settings.STATE_DB.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +107,7 @@ def conexion():
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL;")
     con.executescript(_SCHEMA)
+    _migrar(con)
     try:
         yield con
         con.commit()
@@ -109,16 +132,22 @@ def registrar_evento(linea: str, sku: str, qty: float,
 
 def registrar_po(po_name: str, sku: str, qty_objetivo: float, linea: str = "",
                  odoo_id: int | None = None, componente: str = "",
-                 proveedor: str = "", detalle: str = "") -> None:
+                 proveedor: str = "", detalle: str = "",
+                 mo_id: int | None = None, mo_name: str = "",
+                 insumos_recibidos: bool = False) -> None:
     with conexion() as con:
         con.execute(
             "INSERT INTO po_tracking (po_name, odoo_id, sku, linea, componente, proveedor,"
-            " qty_objetivo, creado_ts, actualizado_ts, detalle) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?) "
+            " qty_objetivo, creado_ts, actualizado_ts, detalle, mo_id, mo_name,"
+            " insumos_recibidos) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(po_name) DO UPDATE SET qty_objetivo=excluded.qty_objetivo,"
-            " odoo_id=excluded.odoo_id, actualizado_ts=excluded.actualizado_ts",
+            " odoo_id=excluded.odoo_id, actualizado_ts=excluded.actualizado_ts,"
+            " mo_id=excluded.mo_id, mo_name=excluded.mo_name,"
+            " insumos_recibidos=excluded.insumos_recibidos",
             (po_name, odoo_id, sku, linea, componente, proveedor,
-             qty_objetivo, _ahora(), _ahora(), detalle))
+             qty_objetivo, _ahora(), _ahora(), detalle, mo_id, mo_name,
+             int(insumos_recibidos)))
 
 
 def acumular_produccion(sku: str, qty: float, linea: str = "") -> list[dict]:

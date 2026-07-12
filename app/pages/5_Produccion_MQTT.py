@@ -51,7 +51,8 @@ def _vista():
             avance = min(1.0, p["qty_producida"] / max(p["qty_objetivo"], 1e-9))
             st.progress(avance, text=f"{iconos.get(p['estado'],'⚪')} {p['po_name']} · "
                                      f"{p['sku']} · {p['qty_producida']:,.0f}/"
-                                     f"{p['qty_objetivo']:,.0f} un · `{p['estado']}`")
+                                     f"{p['qty_objetivo']:,.0f} un · `{p['estado']}` · "
+                                     f"MO `{p.get('mo_name') or '—'}`")
 
     st.subheader("Ultimos reportes de produccion")
     ev = state_store.ultimos_eventos(25)
@@ -126,7 +127,9 @@ FEMSA/Linea1/Process/GoodCount
 {{"value": 9000, "requestedBy": "node-red", "timestamp": "..."}}
 ```
 Cada conteo descuenta la PO abierta de la linea (FIFO) y, al completarla,
-la recibe en Odoo.
+valida en Odoo la orden de fabricacion (mrp.production) vinculada: descuenta
+los componentes de la BOM (concentrados, etiquetas, tapas, ...) — ya recibidos
+al crear la PO — y da entrada al producto terminado.
 
 **Publicacion del ERP (esta suite) — retained**, para que cualquier
 suscriptor nuevo reciba el ultimo estado:
