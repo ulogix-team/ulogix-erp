@@ -128,43 +128,21 @@ def _cacheado(clave: str, cargar, forzar: bool = False):
     return valor
 
 
-def _overrides_parametros(forzar: bool = False) -> dict:
-    def _cargar():
-        try:
-            from integrations.sheets_client import Contabilidad
-            return Contabilidad().leer_parametros()
-        except Exception:  # noqa: BLE001 — Sheets no disponible: sin overrides
-            return {}
-    return _cacheado("parametros", _cargar, forzar)
-
-
-def _overrides_capex(forzar: bool = False) -> list[tuple]:
-    def _cargar():
-        try:
-            from integrations.sheets_client import Contabilidad
-            return Contabilidad().leer_capex()
-        except Exception:  # noqa: BLE001
-            return []
-    return _cacheado("capex_filas", _cargar, forzar)
-
-
 def _num(valor, default: float) -> float:
-    """Castea un valor de celda de Sheets (texto tal como llega de gspread) a
-    float; admite miles con coma y porcentajes ("18%" -> 0.18). Ante celda
-    vacia o texto no numerico cae al default local — una celda mal
+    """Castea un valor de celda de Sheets a float. El libro real usa formato
+    colombiano (punto = separador de miles, coma = separador decimal:
+    "3.850" -> 3850, "18,00%" -> 0.18) via
+    `integrations.sheets_client.numero_cop()` -- NO el formato ingles. Ante
+    celda vacia o texto no numerico cae al default local — una celda mal
     diligenciada nunca revienta el motor financiero."""
     if valor is None or valor == "":
         return default
     if isinstance(valor, (int, float)):
         return float(valor)
-    texto = str(valor).strip().replace("$", "").replace(" ", "")
-    es_pct = texto.endswith("%")
-    if es_pct:
-        texto = texto[:-1]
-    texto = texto.replace(",", "")
-    try:
-        v = float(texto)
-    except ValueError:
+    from integrations.sheets_client import numero_cop
+    es_pct = str(valor).strip().endswith("%")
+    v = numero_cop(valor, None)
+    if v is None:
         return default
     return v / 100 if es_pct else v
 
@@ -178,6 +156,75 @@ _CLAVES_PARAMETROS = {
 } | {f"VIDA_{cat}" for cat in VIDAS} | {
     f"{campo}_{sku}" for campo in ("precio_venta_cop", "costo_material_cop") for sku in SKUS
 }
+
+# Alias de las claves REALES del libro (minusculas, en español -- las que
+# trae hoy la hoja Parametros, poblada por el generador del repo hermano) a
+# las claves canonicas de arriba. Las claves canonicas tambien se aceptan
+# directamente (sin distinguir mayusculas/minusculas), para no depender de
+# que nadie mantenga este alias sincronizado con el libro a futuro.
+_ALIAS_PARAMETROS = {
+    "trm_cop_usd": "TRM",
+    "factor_rfq_benchmark": "FACTOR_RFQ",
+    "tmar_anual": "TMAR_ANUAL",
+    "tasa_renta": "TASA_RENTA",
+    "crecimiento_demanda": "CRECIMIENTO_DEMANDA_ANUAL",
+    "uplift_throughput": "UPLIFT_THROUGHPUT",
+    "factor_monetizacion": "FACTOR_MONETIZACION",
+    "rampa_mes5": "RAMPA_MES5",
+    "scrap_pp": "SCRAP_PP",
+    "mant_evitado_mes": "MANT_EVITADO_MES",
+    "wc_pct_ingreso": "WC_PCT_INGRESO",
+    "nomina_operacion_mes": "NOMINA_OPERACION_MES",
+    "nomina_implementacion_mes": "NOMINA_IMPLEMENTACION_MES",
+    "otros_fijos_base_mes": "OTROS_FIJOS_BASE_MES",
+    "otros_fijos_proyecto_mes": "OTROS_FIJOS_PROYECTO_MES",
+    "contingencia_capex": "CONTINGENCIA",
+    "precio_p1_330ml": "precio_venta_cop_P1-CC350-RGB",
+    "precio_p2_pet15": "precio_venta_cop_P2-QT1500-PET",
+    "precio_p3_garrafon": "precio_venta_cop_P3-GARR25L",
+}
+
+
+def _normalizar_overrides(crudo: dict) -> dict:
+    """Traduce las claves reales del libro (`_ALIAS_PARAMETROS`) a las
+    claves canonicas de `_CLAVES_PARAMETROS`. `fase_capex_1..4` (filas
+    separadas en el libro real, una por fase) se combinan en un solo
+    'FASES_CAPEX' (cada valor ya pasado por `_num` para evitar comas
+    anidadas al unirlas)."""
+    crudo = {str(k).strip(): v for k, v in crudo.items() if str(k).strip()}
+    out: dict[str, object] = {}
+    for k, v in crudo.items():
+        canon = _ALIAS_PARAMETROS.get(k.lower()) or (
+            k.upper() if k.upper() in _CLAVES_PARAMETROS else None)
+        if canon:
+            out[canon] = v
+    fases_crudo = [crudo.get(f"fase_capex_{i}") for i in range(1, PREOP + 1)]
+    if "FASES_CAPEX" not in out and all(f not in (None, "") for f in fases_crudo):
+        out["FASES_CAPEX"] = ",".join(str(_num(f, 0.0)) for f in fases_crudo)
+    return out
+
+
+def _overrides_parametros(forzar: bool = False) -> dict:
+    def _cargar():
+        try:
+            from integrations.sheets_client import Contabilidad
+            cont = Contabilidad()
+            crudo = cont.leer_parametros()
+            crudo.update(cont.leer_licencias())  # CAPEX_SOFTWARE / OPEX_LICENCIAS_MES
+            return _normalizar_overrides(crudo)
+        except Exception:  # noqa: BLE001 — Sheets no disponible: sin overrides
+            return {}
+    return _cacheado("parametros", _cargar, forzar)
+
+
+def _overrides_capex(forzar: bool = False) -> list[tuple]:
+    def _cargar():
+        try:
+            from integrations.sheets_client import Contabilidad
+            return Contabilidad().leer_capex()
+        except Exception:  # noqa: BLE001
+            return []
+    return _cacheado("capex_filas", _cargar, forzar)
 
 
 def _parametros(forzar: bool = False) -> dict:

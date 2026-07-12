@@ -199,9 +199,21 @@ def _fin():
             f"ROI {ind['roi_horizonte_60m']*100:.1f}% · payback {ind['payback_simple_meses']}m")
 
 
+@paso("15. RRHH (roster de empleados + reconciliacion)")
+def _rrhh():
+    from core import rrhh
+    from integrations import rrhh_client
+    df, origen = rrhh_client.leer_empleados()
+    problemas = rrhh.validar_roster(df)
+    assert not problemas, problemas
+    costo = rrhh.costo_mensual_por_fase(df)
+    assert costo.get("Operacion", 0) > 0 and costo.get("Implementacion", 0) > 0
+    return f"{len(df)} empleados ({origen}) · {len(rrhh.resumen_por_rol(df))} roles"
+
+
 if __name__ == "__main__":
     for fn in [_datos, _forecast, _esc, _inv, _mrp, _sens, _odoo, _ventas, _mw,
-               _cont, _uns, _erp, _toee, _fin]:
+               _cont, _uns, _erp, _toee, _fin, _rrhh]:
         fn()
     print("\n=== VERIFICACION ULOGIX ===")
     ok = True

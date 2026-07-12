@@ -45,7 +45,7 @@ nombres de servicio.
 
 | Ruta | Contenido |
 |---|---|
-| `app/Inicio.py` + `app/pages/1..9` | Dashboard Streamlit (9 páginas) |
+| `app/Inicio.py` + `app/pages/1..10` | Dashboard Streamlit (10 páginas) |
 | `app/ui/theme.py` | Tema, helpers (`datos_pronostico()`, `demanda_activa()`, `plotly_layout()`), supresión de warnings |
 | `core/forecast.py` | Holt-Winters amortiguado + Bates-Granger óptimo + Monte Carlo |
 | `core/escenarios.py` | 6 presets + escenario personalizado (elasticidades **por producto**) |
@@ -53,12 +53,14 @@ nombres de servicio.
 | `core/tiempos_oee.py` | Tiempos y OEE **documentales** (auditoría corregida) |
 | `core/finanzas_negocio.py` | **Motor financiero demand-driven**; `CAPEX_FILAS`/`TRM`/`TMAR`/... son el **default/fallback** — la fuente viva es la hoja `Parametros`/`CAPEX` de Sheets |
 | `core/sensibilidad.py` | Tornado paramétrico |
+| `core/rrhh.py` | Dotación/costo del roster de empleados (puro; reconcilia contra la hoja `Personal`) |
 | `integrations/uns.py` | Interpreta `config/uns_femsa.yaml` (63 tópicos) |
 | `integrations/mqtt_middleware.py` | Suscribe UNS, cumple POs, publica rama ERP retained |
 | `integrations/odoo_client.py` | XML-RPC; `LineaPedido(nombre, default_code, cantidad, precio_unitario)`; compras+fabricación+**ventas+facturación** (cliente y proveedor), todo idempotente por referencia |
 | `integrations/sheets_client.py` | gspread + **fallback a Excel local** |
+| `integrations/rrhh_client.py` | Roster de empleados: hoja `Empleados` de Sheets + fallback `data/empleados.csv` |
 | `integrations/state_store.py` | SQLite WAL, 8 tablas ERP |
-| `tools/verificacion.py` | **QA de 14 pasos — correr siempre antes de dar algo por bueno** |
+| `tools/verificacion.py` | **QA de 15 pasos — correr siempre antes de dar algo por bueno** |
 | `tools/bootstrap_odoo.py` | Puebla Odoo desde cero (idempotente) |
 | `tools/simulador_produccion.py` | Publica KPIs y GoodCount al UNS |
 
@@ -101,6 +103,21 @@ nombres de servicio.
    El maestro físico que usa Odoo/MRP (`data/maestro_productos.csv`) es un
    dato **separado** y no lo gobierna esta hoja de Sheets — ver la nota en
    ese mismo skill si hace falta mantenerlos consistentes.
+   **Nota real (verificado contra el libro):** las claves del libro real son
+   minúsculas y en español (`trm_cop_usd`, `nomina_operacion_mes`,
+   `fase_capex_1..4` en filas separadas, `precio_p1_330ml`...) y los números
+   vienen en **formato colombiano** (punto = miles, coma = decimales —
+   `"3.850"` = 3850, `"18,00%"` = 0.18), no en el formato inglés que se
+   asumió al principio. `OPEX_LICENCIAS_MES`/`CAPEX_SOFTWARE` viven en la
+   hoja `Licencias`, no en `Parametros`. Todo esto ya está resuelto:
+   `_ALIAS_PARAMETROS`/`_normalizar_overrides()` en `core/finanzas_negocio.py`
+   traducen las claves reales, `integrations/sheets_client.py: numero_cop()`
+   parsea el formato colombiano, `leer_capex()` reconoce el encabezado real
+   por nombre de columna (`activo / paquete`, `vida (años)`, con una columna
+   extra `CAPEX COP` ya calculada que se ignora), y `leer_licencias()` lee
+   los dos totales de esa hoja. Verificado end-to-end: 25 filas de CAPEX
+   real leídas correctamente (vs. 24 del default local), VPN $8.059 M / TIR
+   36.7 % / ROI 104.0 % / payback 33 m con datos en vivo.
 4. **`t_ciclo_ideal` ≠ `t_ciclo`** y **takt ≠ tiempo de ciclo**. Errores
    conceptuales ya corregidos; no reintroducirlos.
 5. **Hilos BLAS en 1** (`OPENBLAS_NUM_THREADS=1` etc. en Dockerfile y compose):
@@ -135,6 +152,16 @@ nombres de servicio.
    factura de **proveedor** (`account.move` `in_invoice`) sobre la PO ya
    recibida — la cuenta por pagar, no solo el movimiento de inventario. El
    vínculo lote↔ventas vive en `state_store.venta_tracking` (`mo_name`).
+10. **RRHH: roster individual en la hoja `Empleados`, separado del agregado
+    `Personal`.** `Personal` es la hoja del libro financiero con el agregado
+    por rol (conteo, costo unitario, costo total, fase) que ya gobierna
+    `NOMINA_OPERACION_MES`/`NOMINA_IMPLEMENTACION_MES` (decisión #3) — **no se
+    toca**. `Empleados` (nueva, `integrations/rrhh_client.py`) es el detalle
+    persona por persona; cada fila tiene un `rol_personal` que debe coincidir
+    con las categorías de `Personal` para poder reconciliar ambas
+    (`core.rrhh.reconciliar_con_personal`, sección 3 de la página *RRHH*). A
+    diferencia de `Demanda`/`Inventarios`, `Empleados` no tiene fórmulas
+    dependientes: se reemplaza completa (`clear`+`append`) sin problema.
 
 ## Estado actual (validado)
 
@@ -146,7 +173,10 @@ nombres de servicio.
   (12 m operativos) · **VPN $8.033 M · TIR 36.6 % E.A. · ROI 103.8 % · payback
   33/42 m**.
 - Libro Excel: 23 hojas, 3.741 fórmulas, **0 errores** tras recalcular.
-- `tools/verificacion.py`: **14/14 en verde**.
+- `tools/verificacion.py`: **15/15 en verde**.
+- Hoja `Empleados` creada y poblada en el libro real (28 personas, reconcilia
+  exacto con los totales de `Personal`: Operación $85.915.382, Implementación
+  $87.161.760).
 
 ## Comandos
 
@@ -155,7 +185,7 @@ nombres de servicio.
 docker compose -f docker-compose.dashboard.yml up -d --build
 docker compose -f docker-compose.dashboard.yml logs -f dashboard
 
-# QA completo (14 pasos) — obligatorio antes de cerrar cualquier cambio
+# QA completo (15 pasos) — obligatorio antes de cerrar cualquier cambio
 python tools/verificacion.py
 
 # Poblar Odoo desde cero
@@ -207,9 +237,6 @@ Estas credenciales son de desarrollo y se rotarán.
 - Costeo/valoración de inventario, checkpoints de calidad, reposición
   automática de clientes y registro de cobro (`account.payment`) contra la
   factura de cliente — el flujo venta→factura ya existe, falta el cobro.
-- Confirmar contra el libro real la estructura de `Parametros`/`CAPEX` (nombres
-  de claves, si ya hay datos con esos nombres) antes de asumir que el contrato
-  documentado en `docs/INTEGRACION_APIS.md` calza sin ajustes.
 - El generador del repo hermano (`../femsa-modelo-financiero/tools/
   generar_modelo.py`) todavía sobreescribe `Parametros`/`CAPEX` con el seed de
   Python en cada regeneración — falta hacerlo "merge-aware" (no pisar valores

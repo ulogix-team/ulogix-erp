@@ -1,0 +1,29 @@
+cedula,nombre,cargo,rol_personal,linea,turno,fase,fecha_ingreso,estado,salario_mensual_cop,telefono,email
+1000000001,Yesenia Ortiz,Operario de linea,Operarios de linea (3 turnos),L1,Turno 1,Operacion,2026-03-16,activo,3825878,3001000001,yesenia.ortiz@ulogix-femsa.local
+1000000002,Camilo Rojas,Operario de linea,Operarios de linea (3 turnos),L1,Turno 1,Operacion,2026-03-16,activo,3825878,3001000002,camilo.rojas@ulogix-femsa.local
+1000000003,Diana Marcela Vargas,Operario de linea,Operarios de linea (3 turnos),L2,Turno 1,Operacion,2026-03-16,activo,3825878,3001000003,diana.vargas@ulogix-femsa.local
+1000000004,Jhon Alexander Perez,Operario de linea,Operarios de linea (3 turnos),L2,Turno 1,Operacion,2026-03-16,activo,3825878,3001000004,jhon.perez@ulogix-femsa.local
+1000000005,Leidy Johanna Castro,Operario de linea,Operarios de linea (3 turnos),L3,Turno 1,Operacion,2026-03-16,activo,3825878,3001000005,leidy.castro@ulogix-femsa.local
+1000000006,Wilmer Andres Suarez,Operario de linea,Operarios de linea (3 turnos),L3,Turno 1,Operacion,2026-03-16,activo,3825878,3001000006,wilmer.suarez@ulogix-femsa.local
+1000000007,Paola Andrea Gomez,Operario de linea,Operarios de linea (3 turnos),L1,Turno 2,Operacion,2026-03-16,activo,3825878,3001000007,paola.gomez@ulogix-femsa.local
+1000000008,Ferney Alonso Diaz,Operario de linea,Operarios de linea (3 turnos),L1,Turno 2,Operacion,2026-03-16,activo,3825878,3001000008,ferney.diaz@ulogix-femsa.local
+1000000009,Angela Maria Beltran,Operario de linea,Operarios de linea (3 turnos),L2,Turno 2,Operacion,2026-03-16,activo,3825878,3001000009,angela.beltran@ulogix-femsa.local
+1000000010,Robinson Estiven Quiroga,Operario de linea,Operarios de linea (3 turnos),L2,Turno 2,Operacion,2026-03-16,activo,3825878,3001000010,robinson.quiroga@ulogix-femsa.local
+1000000011,Sandra Milena Pineda,Operario de linea,Operarios de linea (3 turnos),L3,Turno 2,Operacion,2026-03-16,activo,3825878,3001000011,sandra.pineda@ulogix-femsa.local
+1000000012,Duvan Ricardo Mora,Operario de linea,Operarios de linea (3 turnos),L3,Turno 2,Operacion,2026-03-16,activo,3825878,3001000012,duvan.mora@ulogix-femsa.local
+1000000013,Katherine Lorena Nino,Operario de linea,Operarios de linea (3 turnos),L1,Turno 3,Operacion,2026-03-16,activo,3825878,3001000013,katherine.nino@ulogix-femsa.local
+1000000014,Cristian Camilo Avila,Operario de linea,Operarios de linea (3 turnos),L1,Turno 3,Operacion,2026-03-16,activo,3825878,3001000014,cristian.avila@ulogix-femsa.local
+1000000015,Luz Adriana Fonseca,Operario de linea,Operarios de linea (3 turnos),L2,Turno 3,Operacion,2026-03-16,activo,3825878,3001000015,luz.fonseca@ulogix-femsa.local
+1000000016,Nelson Ivan Cardenas,Operario de linea,Operarios de linea (3 turnos),L2,Turno 3,Operacion,2026-03-16,activo,3825878,3001000016,nelson.cardenas@ulogix-femsa.local
+1000000017,Yuliana Marcela Rincon,Operario de linea,Operarios de linea (3 turnos),L3,Turno 3,Operacion,2026-03-16,activo,3825878,3001000017,yuliana.rincon@ulogix-femsa.local
+1000000018,Edwin Fabian Torres,Operario de linea,Operarios de linea (3 turnos),L3,Turno 3,Operacion,2026-03-16,activo,3825878,3001000018,edwin.torres@ulogix-femsa.local
+1000000019,Martha Cecilia Sanchez,Supervisor de turno,Supervisores de turno,Todas,Rotativo,Operacion,2026-03-16,activo,5158405,3002000001,martha.sanchez@ulogix-femsa.local
+1000000020,Oscar Ivan Hernandez,Supervisor de turno,Supervisores de turno,Todas,Rotativo,Operacion,2026-03-16,activo,5158405,3002000002,oscar.hernandez@ulogix-femsa.local
+1000000021,Ruben Dario Salazar,Supervisor de planta,Supervisor de planta,Todas,Administrativo,Operacion,2026-03-16,activo,6732768,3003000001,ruben.salazar@ulogix-femsa.local
+1000000022,Alejandra Patricia Cifuentes,Lider de proyecto ULogix,Equipo diseno y desarrollo ULogix,Todas,Administrativo,Implementacion,2026-01-12,activo,12451680,3004000001,alejandra.cifuentes@ulogix-femsa.local
+1000000023,Julian Esteban Moreno,Ingeniero de automatizacion,Equipo diseno y desarrollo ULogix,Todas,Administrativo,Implementacion,2026-01-12,activo,12451680,3004000002,julian.moreno@ulogix-femsa.local
+1000000024,Natalia Andrea Reyes,Ingeniera MES/UNS,Equipo diseno y desarrollo ULogix,Todas,Administrativo,Implementacion,2026-01-12,activo,12451680,3004000003,natalia.reyes@ulogix-femsa.local
+1000000025,Andres Felipe Bernal,Ingeniero de procesos,Equipo diseno y desarrollo ULogix,Todas,Administrativo,Implementacion,2026-01-12,activo,12451680,3004000004,andres.bernal@ulogix-femsa.local
+1000000026,Sara Lucia Herrera,Analista de datos,Equipo diseno y desarrollo ULogix,Todas,Administrativo,Implementacion,2026-01-12,activo,12451680,3004000005,sara.herrera@ulogix-femsa.local
+1000000027,Hector Manuel Aguilar,Especialista en integracion Odoo,Equipo diseno y desarrollo ULogix,Todas,Administrativo,Implementacion,2026-01-12,activo,12451680,3004000006,hector.aguilar@ulogix-femsa.local
+1000000028,Monica Fernanda Rojas,Gestora del cambio,Equipo diseno y desarrollo ULogix,Todas,Administrativo,Implementacion,2026-01-12,activo,12451680,3004000007,monica.rojas@ulogix-femsa.local

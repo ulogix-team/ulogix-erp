@@ -40,33 +40,65 @@ Sheets** de la página Finanzas para forzarlo al instante):
 | Inventario | `Inventarios` (política s,Q) | ERP → Sheets | `publicar_inventarios()` — al simular en la página Inventario | **fijo A4:I8** |
 | Compras | `PlanCompras` | ERP → Sheets | `publicar_plan_compras()` | reemplazo |
 | Producción | `LibroProduccion` / `ResumenMensual` / `KPIs_UNS` | ERP → Sheets | middleware/sync | append/reemplazo |
-| Financiero | `Parametros` (pares clave-valor: TRM, TMAR, nómina, otros fijos, licencias, vidas útiles, unit economics por SKU...) | **Sheets → ERP** | `leer_parametros()` | pares clave-valor, cualquier fila |
-| Financiero | `CAPEX` (tabla: sección, línea, activo, cantidad, moneda, costo_unitario, vida_años, categoría_dep) | **Sheets → ERP** | `leer_capex()` | tabla con encabezado exacto |
+| Financiero | `Parametros` (pares clave-valor: TRM, TMAR, nómina, otros fijos, vidas útiles, unit economics por SKU...) | **Sheets → ERP** | `leer_parametros()` | pares clave-valor, cualquier fila |
+| Financiero | `CAPEX` (tabla: sección, línea, activo, cantidad, moneda, costo_unitario, vida_años, categoría_dep) | **Sheets → ERP** | `leer_capex()` | tabla, encabezado reconocido por nombre de columna |
+| Financiero | `Licencias` (`CAPEX software capitalizable`, `OPEX mensual licencias` — última celda no vacía de la fila) | **Sheets → ERP** | `leer_licencias()` | filas etiquetadas, sin columna fija |
+| RRHH | `Empleados` (roster individual — ver `integrations/rrhh_client.py`) | ERP → Sheets *(alta)* / **Sheets → ERP** *(lectura)* | `leer_empleados()` / `publicar_empleados()` / `agregar_empleado()` | reemplazo o append, sin fórmulas dependientes |
+
+**Formato numérico del libro real: colombiano, no inglés.** Punto = separador
+de miles, coma = separador decimal (`"3.850"` = 3850, `"18,00%"` = 0.18,
+`"1.200,0"` = 1200.0). `integrations/sheets_client.py: numero_cop()` es el
+parser compartido; `core/finanzas_negocio.py: _num()` lo usa y además maneja
+el sufijo `%`. **No** uses el formato inglés al editar celdas nuevas.
 
 **Contrato de la hoja `Parametros` para el motor financiero** (todas las
 claves son opcionales — si faltan o el valor no castea a número, el motor usa
-su default local, documentado en `core/finanzas_negocio.py`):
-`TRM`, `FACTOR_RFQ`, `TMAR_ANUAL`, `UPLIFT_THROUGHPUT`, `FACTOR_MONETIZACION`,
-`RAMPA_MES5`, `SCRAP_PP`, `MANT_EVITADO_MES`, `TASA_RENTA`, `WC_PCT_INGRESO`,
-`CRECIMIENTO_DEMANDA_ANUAL`, `FASES_CAPEX` (texto `"0.20,0.35,0.27,0.18"`),
-`NOMINA_OPERACION_MES`, `NOMINA_IMPLEMENTACION_MES`, `OTROS_FIJOS_BASE_MES`,
-`OTROS_FIJOS_PROYECTO_MES`, `OPEX_LICENCIAS_MES`, `CAPEX_SOFTWARE`,
-`CONTINGENCIA`, `VIDA_equipos` / `VIDA_automatizacion` / `VIDA_servicios` /
-`VIDA_intangibles` / `VIDA_software` (años de depreciación por categoría), y
-unit economics por SKU: `precio_venta_cop_<SKU>` / `costo_material_cop_<SKU>`
-(p.ej. `precio_venta_cop_P1-CC350-RGB`). Los valores admiten separador de
-miles (`,`) y `%` (p.ej. `TMAR_ANUAL` = `18%` o `0.18`, da igual). Esta hoja
-**no** gobierna el maestro físico que usa Odoo/MRP (`data/maestro_productos.csv`
-vía `core/forecast.cargar_maestro()`) — solo las unit economics del caso de
-negocio de `core/finanzas_negocio.py`; ver decisión de diseño #3 en `CLAUDE.md`.
+su default local). El libro real usa claves **minúsculas en español**, que
+`core/finanzas_negocio.py: _ALIAS_PARAMETROS` traduce a las claves canónicas
+internas (también se aceptan las claves canónicas directamente, sin
+distinguir mayúsculas/minúsculas):
 
-**Contrato de la hoja `CAPEX`**: fila 1 debe ser exactamente el encabezado
-`seccion, linea, activo, cantidad, moneda, costo_unitario, vida_anios,
-categoria_dep` (mismo orden que `CAPEX_FILAS` en `core/finanzas_negocio.py`);
-`moneda` es `COP`, `USD` (aplica `FACTOR_RFQ`) o `USD*` (cotización real, sin
-factor RFQ). Si la hoja no existe, está vacía o el encabezado no calza
-exactamente, el motor cae a su `CAPEX_FILAS` local — no hay error visible al
-usuario, solo se ignora la hoja.
+| Clave real (libro) | Clave canónica |
+|---|---|
+| `trm_cop_usd` | `TRM` |
+| `factor_rfq_benchmark` | `FACTOR_RFQ` |
+| `tmar_anual` | `TMAR_ANUAL` |
+| `tasa_renta` | `TASA_RENTA` |
+| `crecimiento_demanda` | `CRECIMIENTO_DEMANDA_ANUAL` |
+| `uplift_throughput` | `UPLIFT_THROUGHPUT` |
+| `factor_monetizacion` | `FACTOR_MONETIZACION` |
+| `rampa_mes5` | `RAMPA_MES5` |
+| `scrap_pp` | `SCRAP_PP` |
+| `mant_evitado_mes` | `MANT_EVITADO_MES` |
+| `wc_pct_ingreso` | `WC_PCT_INGRESO` |
+| `nomina_operacion_mes` | `NOMINA_OPERACION_MES` |
+| `nomina_implementacion_mes` | `NOMINA_IMPLEMENTACION_MES` |
+| `otros_fijos_base_mes` | `OTROS_FIJOS_BASE_MES` |
+| `otros_fijos_proyecto_mes` | `OTROS_FIJOS_PROYECTO_MES` |
+| `contingencia_capex` | `CONTINGENCIA` |
+| `fase_capex_1` .. `fase_capex_4` (4 filas) | `FASES_CAPEX` (se combinan) |
+| `precio_p1_330ml` / `precio_p2_pet15` / `precio_p3_garrafon` | `precio_venta_cop_<SKU>` |
+
+`VIDA_equipos`/`VIDA_automatizacion`/`VIDA_servicios`/`VIDA_intangibles`/
+`VIDA_software` y `costo_material_cop_<SKU>` **no tienen hoy una fila
+equivalente en el libro real** — quedan solo con el default local hasta que
+se agreguen (con esos mismos nombres canónicos, no hace falta alias). Esta
+hoja **no** gobierna el maestro físico que usa Odoo/MRP
+(`data/maestro_productos.csv` vía `core/forecast.cargar_maestro()`) — solo
+las unit economics del caso de negocio de `core/finanzas_negocio.py`; ver
+decisión de diseño #3 en `CLAUDE.md`.
+
+**Contrato de la hoja `CAPEX`**: `leer_capex()` busca la fila de encabezado
+por **nombre de columna** (no por posición exacta) — reconoce variantes como
+`activo / paquete`, `cant.`, `vida (años)`, `categoria D&A`, y ADEMÁS ignora
+columnas extra intercaladas (el libro real trae una `CAPEX COP` ya calculada
+entre `costo_unitario` y `vida_anios`). `moneda` es `COP`, `USD` (aplica
+`FACTOR_RFQ`) o `USD*` (cotización real, sin factor RFQ). `OPEX_LICENCIAS_MES`
+y `CAPEX_SOFTWARE` **no** viven en `CAPEX` ni en `Parametros` — viven en la
+hoja `Licencias` (filas `CAPEX software capitalizable` / `OPEX mensual
+licencias`), leídas por `leer_licencias()`. Si una hoja no existe, está vacía
+o no se reconoce ninguna columna esperada, el motor cae a su default local —
+no hay error visible al usuario, solo se ignora la hoja.
 
 Los rangos **fijos** de `Demanda`/`DemandaEscenario`/`Inventarios` existen
 porque las hojas financieras (`ER_Proyecto`, `Flujo_Caja`, `Balance`,
@@ -205,3 +237,27 @@ gobernado por Sheets o corriendo en fallback local (`core.finanzas_negocio.
 estado_fuente_financiera()`), qué claves de `Parametros` están activas y si
 `CAPEX` trajo filas — con botón **🔄 Refrescar desde Sheets** para forzar una
 relectura inmediata sin esperar el TTL de 60 s.
+
+---
+
+## 5 · RRHH (roster de empleados)
+
+`integrations/rrhh_client.py` gestiona la hoja `Empleados` (roster individual)
+como una integración separada de `sheets_client.Contabilidad` — no comparte
+código porque no tiene rangos fijos ni fórmulas dependientes (se puede
+`clear`+`append` sin romper nada, a diferencia de `Demanda`/`Inventarios`).
+
+**No confundir con la hoja `Personal`** (agregado por rol: conteo, costo
+unitario, costo total, fase — la que ya gobierna `NOMINA_OPERACION_MES`/
+`NOMINA_IMPLEMENTACION_MES` en `Parametros`, ver §1). `Empleados` es el
+detalle persona por persona; cada fila tiene un `rol_personal` que debe
+coincidir con las categorías de `Personal` para que la página **RRHH**
+pueda reconciliar ambas (`core.rrhh.reconciliar_con_personal`,
+`rrhh_client.leer_nomina_personal()` — lee `Personal` en modo solo lectura,
+nunca escribe ahí). Si un usuario agrega/quita gente en `Empleados` sin
+actualizar el conteo/costo en `Personal` (o viceversa), la página lo marca
+como descuadrado.
+
+Columnas de `Empleados`: `cedula, nombre, cargo, rol_personal, linea, turno,
+fase, fecha_ingreso, estado, salario_mensual_cop, telefono, email`. Fallback
+sin Sheets: `data/empleados.csv` (mismo esquema).

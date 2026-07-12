@@ -64,9 +64,11 @@ Funciones clave:
 - `estado_fuente_financiera(forzar=False)` → diagnóstico: modo (`sheets`/`excel`), qué claves de `Parametros` están activas, si `CAPEX` trajo filas — es lo que pinta la página *Finanzas*
 
 Probar sin levantar la app: `python core/finanzas_negocio.py` (imprime también
-`estado_fuente_financiera()`). **Nunca** pruebes esto contra el Sheets real sin
-permiso explícito del dueño del proyecto — fuerza `DRY_RUN=true` en el entorno
-(`settings.DRY_RUN_FORZADO`) para que caiga al fallback Excel local.
+`estado_fuente_financiera()`). Por defecto valida contra el fallback local
+(fuerza `DRY_RUN=true`, `settings.DRY_RUN_FORZADO`) — pide permiso explícito
+al dueño del proyecto antes de conectarte al Sheets real (verificado una vez,
+ver "Contrato real" abajo; no asumas que sigue vigente sin confirmarlo de
+nuevo si ha pasado tiempo).
 
 ## Valores de referencia (si tus números se alejan mucho, algo se rompió)
 
@@ -102,25 +104,53 @@ filas de `Demanda`/`DemandaEscenario`/`Inventarios`, rompes el libro. La app
 escribe **posicionalmente** (`_escribir_rango()` en `integrations/sheets_client.py`)
 — eso no cambió con la nueva dirección Sheets→ERP.
 
-## Contrato de `Parametros` y `CAPEX` (lo que el usuario puede editar a mano)
+## Contrato REAL de `Parametros`/`CAPEX`/`Licencias` (verificado contra el libro)
 
-`Parametros` es pares clave-valor (cualquier fila, `leer_parametros()` en
-`integrations/sheets_client.py`); claves reconocidas por el motor —todas
-opcionales, sin ellas usa el default local—:
-`TRM, FACTOR_RFQ, TMAR_ANUAL, UPLIFT_THROUGHPUT, FACTOR_MONETIZACION,
-RAMPA_MES5, SCRAP_PP, MANT_EVITADO_MES, TASA_RENTA, WC_PCT_INGRESO,
-CRECIMIENTO_DEMANDA_ANUAL, FASES_CAPEX ("0.20,0.35,0.27,0.18"),
-NOMINA_OPERACION_MES, NOMINA_IMPLEMENTACION_MES, OTROS_FIJOS_BASE_MES,
-OTROS_FIJOS_PROYECTO_MES, OPEX_LICENCIAS_MES, CAPEX_SOFTWARE, CONTINGENCIA,
-VIDA_equipos/VIDA_automatizacion/VIDA_servicios/VIDA_intangibles/VIDA_software`
-y unit economics por SKU: `precio_venta_cop_<SKU>` / `costo_material_cop_<SKU>`
-(p.ej. `precio_venta_cop_P1-CC350-RGB`). Admite `%` y separador de miles.
+**El libro real usa formato numérico COLOMBIANO, no inglés**: punto = miles,
+coma = decimales (`"3.850"` = 3850, `"18,00%"` = 0.18). El parser compartido
+es `integrations/sheets_client.py: numero_cop()`; `core/finanzas_negocio.py:
+_num()` lo usa y además maneja el sufijo `%`. Si escribes un valor nuevo en
+Sheets, usa ese formato (coma decimal), no `18.00`.
 
-`CAPEX` es tabular (`leer_capex()`), encabezado **exacto** en la fila 1:
-`seccion, linea, activo, cantidad, moneda, costo_unitario, vida_anios,
-categoria_dep` — mismo esquema que la tupla `CAPEX_FILAS` del módulo. Si el
-encabezado no calza o la hoja está vacía, se ignora entera (fallback local),
-sin romper nada.
+**Las claves reales del libro son minúsculas y en español**, no las
+constantes en mayúsculas del módulo — `core/finanzas_negocio.py:
+_ALIAS_PARAMETROS` traduce entre ambas (las claves canónicas en mayúsculas
+también funcionan directo, por si el libro cambia a futuro):
+
+| Clave real (libro) | Clave canónica del motor |
+|---|---|
+| `trm_cop_usd` | `TRM` |
+| `factor_rfq_benchmark` | `FACTOR_RFQ` |
+| `tmar_anual`, `tasa_renta` | `TMAR_ANUAL`, `TASA_RENTA` (mismo nombre, min/mayúsc.) |
+| `crecimiento_demanda` | `CRECIMIENTO_DEMANDA_ANUAL` |
+| `uplift_throughput`, `factor_monetizacion`, `rampa_mes5`, `scrap_pp`, `mant_evitado_mes`, `wc_pct_ingreso` | ídem en mayúsculas |
+| `nomina_operacion_mes`, `nomina_implementacion_mes` | ídem en mayúsculas |
+| `otros_fijos_base_mes`, `otros_fijos_proyecto_mes` | ídem en mayúsculas |
+| `contingencia_capex` | `CONTINGENCIA` |
+| `fase_capex_1` .. `fase_capex_4` (4 filas separadas) | `FASES_CAPEX` (se combinan solas) |
+| `precio_p1_330ml`/`precio_p2_pet15`/`precio_p3_garrafon` | `precio_venta_cop_<SKU>` |
+
+`VIDA_*` y `costo_material_cop_<SKU>` **no existen hoy en el libro real** —
+si hace falta gobernarlos desde Sheets, agrégalos con esos nombres canónicos
+tal cual (no necesitan alias).
+
+`OPEX_LICENCIAS_MES`/`CAPEX_SOFTWARE` **no viven en `Parametros` ni en
+`CAPEX`** — viven en la hoja `Licencias`, filas `CAPEX software
+capitalizable` / `OPEX mensual licencias` (última celda no vacía de la fila,
+sin columna fija), leídas por `leer_licencias()`.
+
+`CAPEX` es tabular (`leer_capex()`). El encabezado real **no** es idéntico
+letra por letra al de `CAPEX_FILAS` (`activo / paquete` en vez de `activo`,
+`vida (años)` en vez de `vida_anios`, y trae una columna extra `CAPEX COP`
+ya calculada entre `costo_unitario` y `vida_anios`) — por eso `leer_capex()`
+busca la fila de encabezado **por nombre de columna** (`_ALIAS_CAPEX`, tolera
+variantes e ignora columnas extra) en vez de exigir una lista posicional
+exacta. Verificado: 25 filas reales leídas correctamente (vs. 24 del default
+local — el libro tiene una línea que el seed de Python no tiene).
+
+Si una hoja no existe, está vacía o no se reconoce ninguna columna/etiqueta
+esperada, el motor cae a su default local sin error visible — es el mismo
+patrón de resiliencia del resto del proyecto.
 
 ## Flujo obligatorio al regenerar el libro
 

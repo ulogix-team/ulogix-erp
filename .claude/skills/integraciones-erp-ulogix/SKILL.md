@@ -1,6 +1,6 @@
 ---
 name: integraciones-erp-ulogix
-description: Trabajar con las integraciones externas del proyecto Ulogix — Odoo (XML-RPC, productos, BOM, órdenes de compra/venta, recepciones/entregas, facturación) y Google Sheets (cuenta de servicio, publicación de hojas). Úsala SIEMPRE que se mencione Odoo, XML-RPC, purchase.order, sale.order, mrp.bom, mrp.production, account.move, factura de cliente/proveedor, product.template, bootstrap, API key de Odoo, Google Sheets, gspread, cuenta de servicio, spreadsheet, publicar al libro, o los módulos integrations/odoo_client.py, integrations/sheets_client.py, integrations/state_store.py, tools/bootstrap_odoo.py — incluso si el usuario solo dice "no se crea la orden", "no se actualiza el Excel" o "se duplicaron las órdenes".
+description: Trabajar con las integraciones externas del proyecto Ulogix — Odoo (XML-RPC, productos, BOM, órdenes de compra/venta, recepciones/entregas, facturación), Google Sheets (cuenta de servicio, publicación de hojas) y RRHH (roster de empleados). Úsala SIEMPRE que se mencione Odoo, XML-RPC, purchase.order, sale.order, mrp.bom, mrp.production, account.move, factura de cliente/proveedor, product.template, bootstrap, API key de Odoo, Google Sheets, gspread, cuenta de servicio, spreadsheet, publicar al libro, RRHH, empleados, roster, nómina, dotación, o los módulos integrations/odoo_client.py, integrations/sheets_client.py, integrations/state_store.py, integrations/rrhh_client.py, core/rrhh.py, tools/bootstrap_odoo.py — incluso si el usuario solo dice "no se crea la orden", "no se actualiza el Excel", "se duplicaron las órdenes" o "agregar un empleado".
 ---
 
 # Integraciones: Odoo y Google Sheets
@@ -139,6 +139,23 @@ round-trip, `authenticate` + versión de Odoo + PO de prueba, y escritura/relect
 en Sheets + lectura de `Parametros`. Cada error muestra causa y remedio. La
 **página 9 (Ventas y Facturación)** muestra en pantalla (no solo en el log)
 cuando falla la entrega o la factura de una orden de venta/compra.
+
+## RRHH (roster de empleados)
+
+`integrations/rrhh_client.py` — hoja `Empleados` (roster individual) +
+fallback `data/empleados.csv`, conexión propia a gspread (no reusa
+`sheets_client.Contabilidad`, porque `Empleados` no tiene rangos fijos ni
+fórmulas dependientes: se puede `clear`+`append` sin problema).
+`leer_empleados()` / `publicar_empleados(df)` / `agregar_empleado(**campos)`.
+
+**No confundir con la hoja `Personal`** (agregado por rol que ya gobierna
+`NOMINA_OPERACION_MES`/`NOMINA_IMPLEMENTACION_MES` en `Parametros` — ver
+skill `modelo-financiero-ulogix`). `rrhh_client.leer_nomina_personal()` lee
+`Personal` en modo **solo lectura** (nunca escribe ahí) para que
+`core/rrhh.py: reconciliar_con_personal()` compare el roster individual
+contra ese agregado — la página **10 (RRHH)**, sección 3, muestra si
+cuadran. Cada persona tiene un `rol_personal` que debe coincidir con las
+categorías de `Personal` para que la reconciliación tenga sentido.
 
 ## Seguridad
 

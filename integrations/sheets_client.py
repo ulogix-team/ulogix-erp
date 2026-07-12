@@ -32,6 +32,25 @@ ENCABEZADOS_LIBRO = ["ts", "linea", "sku", "unidades", "precio_unit_cop",
                      "costo_unit_cop", "ingreso_cop", "costo_cop", "margen_cop"]
 
 
+def numero_cop(texto, default: float | None = None) -> float | None:
+    """Convierte una celda del libro (formato colombiano: punto = separador
+    de miles, coma = separador decimal -- "3.850" -> 3850.0, "1.200,0" ->
+    1200.0) a float. NO es el formato ingles (coma de miles, punto decimal).
+    None/vacio/texto no numerico -> default. El '%' se tolera (se descarta;
+    quien llama decide si dividir por 100 -- ver core.finanzas_negocio._num)."""
+    if texto is None or texto == "":
+        return default
+    if isinstance(texto, (int, float)):
+        return float(texto)
+    limpio = str(texto).strip().replace("$", "").replace(" ", "").rstrip("%")
+    limpio = limpio.replace(".", "").replace(",", ".") if "," in limpio \
+        else limpio.replace(".", "")
+    try:
+        return float(limpio)
+    except ValueError:
+        return default
+
+
 class Contabilidad:
     def __init__(self) -> None:
         self.modo = "sheets" if (settings.SHEETS_ENABLED and not settings.DRY_RUN_FORZADO) else "excel"
@@ -286,16 +305,37 @@ class Contabilidad:
                 out[str(fila[0]).strip()] = fila[1]
         return out
 
-    ENC_CAPEX = ["seccion", "linea", "activo", "cantidad", "moneda",
-                "costo_unitario", "vida_anios", "categoria_dep"]
+    # alias de encabezado -> campo canonico (minusculas, sin acentos ni puntos)
+    # tolera variantes reales del libro (p.ej. "activo / paquete", "vida (años)",
+    # "cant.") y columnas extra intercaladas (p.ej. "CAPEX COP" ya calculado)
+    _ALIAS_CAPEX = {
+        "seccion": "seccion", "linea": "linea",
+        "activo": "activo", "activo / paquete": "activo", "activo/paquete": "activo",
+        "cant": "cantidad", "cant.": "cantidad", "cantidad": "cantidad",
+        "moneda": "moneda",
+        "costo unitario": "costo_unitario", "costo_unitario": "costo_unitario",
+        "vida (años)": "vida_anios", "vida (anos)": "vida_anios",
+        "vida_anios": "vida_anios", "vida anios": "vida_anios",
+        "categoria d&a": "categoria_dep", "categoria dep": "categoria_dep",
+        "categoria_dep": "categoria_dep",
+    }
+    _CAMPOS_CAPEX = ["seccion", "linea", "activo", "cantidad", "moneda",
+                     "costo_unitario", "vida_anios", "categoria_dep"]
 
     def leer_capex(self) -> list[tuple]:
-        """Lee la hoja 'CAPEX' (tabla, mismo esquema que CAPEX_FILAS de
+        """Lee la hoja 'CAPEX' (tabla; mismo esquema logico que CAPEX_FILAS de
         core.finanzas_negocio: seccion, linea, activo, cantidad, moneda,
         costo_unitario, vida_anios, categoria_dep) para que el CAPEX se
-        gobierne desde Sheets en vez de la constante local. Fallback: lista
-        vacia si la hoja no existe, esta vacia o no calza el encabezado
-        esperado — el motor financiero cae entonces a su CAPEX_FILAS local."""
+        gobierne desde Sheets en vez de la constante local.
+
+        Busca la fila de encabezado por NOMBRE de columna (via `_ALIAS_CAPEX`,
+        tolera variantes de redaccion y columnas extra intercaladas como una
+        'CAPEX COP' ya calculada) en vez de exigir una lista exacta y
+        posicional — el libro real trae textos como 'activo / paquete' o
+        'vida (años)' que no calzan letra por letra con el nombre de campo.
+        Fallback: lista vacia si la hoja no existe, esta vacia o no se
+        encuentra un encabezado reconocible — el motor cae a su CAPEX_FILAS
+        local."""
         try:
             if self.modo == "sheets":
                 ws = self._spreadsheet().worksheet("CAPEX")
@@ -311,20 +351,70 @@ class Contabilidad:
                 return []
             filas = [[c if c is not None else "" for c in row]
                      for row in wb["CAPEX"].iter_rows(values_only=True)]
-        if not filas or [str(c).strip() for c in filas[0][:8]] != self.ENC_CAPEX:
+
+        indice_col: dict[str, int] | None = None
+        fila_encabezado = -1
+        for i, fila in enumerate(filas):
+            candidato = {self._ALIAS_CAPEX[str(c).strip().lower()]: j
+                        for j, c in enumerate(fila)
+                        if str(c).strip().lower() in self._ALIAS_CAPEX}
+            if set(self._CAMPOS_CAPEX) <= set(candidato):
+                indice_col, fila_encabezado = candidato, i
+                break
+        if indice_col is None:
             return []
+
         salida = []
-        for fila in filas[1:]:
-            if len(fila) < 8 or not str(fila[0]).strip():
+        for fila in filas[fila_encabezado + 1:]:
+            if len(fila) <= max(indice_col.values()) or not str(fila[indice_col["seccion"]]).strip():
                 continue
-            try:
-                salida.append((str(fila[0]).strip(), str(fila[1]).strip(),
-                               str(fila[2]).strip(), float(fila[3]),
-                               str(fila[4]).strip(), float(fila[5]),
-                               float(fila[6]), str(fila[7]).strip()))
-            except (TypeError, ValueError):
-                continue  # fila mal diligenciada: se ignora, no revienta el motor
+            valores: dict[str, object] = {}
+            for c in self._CAMPOS_CAPEX:
+                crudo = fila[indice_col[c]]
+                if c in ("cantidad", "costo_unitario", "vida_anios"):
+                    valores[c] = numero_cop(crudo)
+                else:
+                    valores[c] = str(crudo).strip()
+            if any(valores[c] is None for c in ("cantidad", "costo_unitario", "vida_anios")):
+                continue  # fila mal diligenciada (o de resumen/total): se ignora
+            salida.append(tuple(valores[c] for c in self._CAMPOS_CAPEX))
         return salida
+
+    def leer_licencias(self) -> dict:
+        """Lee de la hoja 'Licencias' los totales 'CAPEX software
+        capitalizable' y 'OPEX mensual licencias' (ultima celda no vacia de
+        esa fila -- el libro real no los deja en una columna fija) para que
+        core.finanzas_negocio los use como override de CAPEX_SOFTWARE /
+        OPEX_LICENCIAS_MES. Fallback: {} si Sheets no esta disponible o la
+        hoja no tiene esas etiquetas."""
+        try:
+            if self.modo == "sheets":
+                ws = self._spreadsheet().worksheet("Licencias")
+                filas = ws.get_all_values()
+            else:
+                raise RuntimeError("modo excel")
+        except Exception:  # noqa: BLE001
+            from openpyxl import load_workbook
+            if not settings.LEDGER_XLSX.exists():
+                return {}
+            wb = load_workbook(settings.LEDGER_XLSX, read_only=True)
+            if "Licencias" not in wb.sheetnames:
+                return {}
+            filas = [[c if c is not None else "" for c in row]
+                     for row in wb["Licencias"].iter_rows(values_only=True)]
+        out: dict[str, str] = {}
+        for fila in filas:
+            if not fila or not str(fila[0]).strip():
+                continue
+            etiqueta = str(fila[0]).strip().lower()
+            no_vacias = [str(c).strip() for c in fila[1:] if str(c).strip()]
+            if not no_vacias:
+                continue
+            if etiqueta.startswith("capex software capitalizable"):
+                out["CAPEX_SOFTWARE"] = no_vacias[-1]
+            elif etiqueta.startswith("opex mensual licencias"):
+                out["OPEX_LICENCIAS_MES"] = no_vacias[-1]
+        return out
 
     def probar(self) -> dict:
         """Prueba de conectividad: escribe y relee una celda de verificacion."""
