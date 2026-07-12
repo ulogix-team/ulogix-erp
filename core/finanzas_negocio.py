@@ -18,14 +18,30 @@ garrafon $10,500/6,943), y la estructura completa del modelo del proyecto:
   (87.16M/mes x 4) + licencias; capital de trabajo 8% del ingreso incremental
   (m5 -> recupera m60). Indicadores: VPN (TMAR 18% EA), TIR, ROI, paybacks.
 
-CAPEX_FILAS es la FUENTE UNICA (este modulo y el generador del libro Excel la
-comparten): benchmark de retrofit sin la fila generica de paletizado +
-BOM REAL de las celdas + software capitalizable de licencias.
+GOBIERNO DE PARAMETROS (Sheets manda, Python es el fallback).
+Todos los parametros escalares de abajo (TRM, TMAR, nomina, otros fijos,
+licencias, vidas utiles, fases de CAPEX...), el CAPEX tabular (CAPEX_FILAS) y
+las unit economics por SKU se leen en cada llamada desde la hoja 'Parametros'
+(pares clave-valor) y la hoja 'CAPEX' (tabla) del libro de Google Sheets via
+`integrations.sheets_client.Contabilidad`, con TTL corto en memoria de proceso
+para no golpear la API en cada rerun de Streamlit. Los valores hardcodeados en
+este modulo (constantes de mayuscula abajo) son el DEFAULT/FALLBACK: si Sheets
+no esta configurado, la celda esta vacia o el valor no castea a numero, el
+motor sigue funcionando exactamente igual que antes de esta capa. Este modulo
+sigue siendo puro (sin Streamlit); la lectura de Sheets vive en
+integrations/sheets_client.py y aqui solo se invoca.
+
+Decision de diseno #3 de CLAUDE.md (historial): hasta esta version,
+CAPEX_FILAS aqui era la FUENTE UNICA y el generador del libro Excel
+(../femsa-modelo-financiero) la importaba. Por pedido explicito del dueño del
+proyecto esa direccion se invierte: ahora el libro de Sheets es la fuente
+viva y estas constantes son el "seed"/fallback inicial (ver CLAUDE.md).
 """
 from __future__ import annotations
 
 from pathlib import Path
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -35,11 +51,10 @@ from config import settings
 
 SKUS = ["P1-CC350-RGB", "P2-QT1500-PET", "P3-GARR25L"]
 
-# ------------------------------ parametros (espejo de Parametros en Sheets)
+# ------------------------------ parametros (defaults; ver hoja Parametros en Sheets)
 TRM = 3850.0
 FACTOR_RFQ = 0.97
 TMAR_ANUAL = 0.18
-TMAR_MENSUAL = (1 + TMAR_ANUAL) ** (1 / 12) - 1
 MESES, PREOP = 60, 4
 UPLIFT_THROUGHPUT = 0.11
 FACTOR_MONETIZACION = 0.31
@@ -56,11 +71,11 @@ OTROS_FIJOS_BASE_MES = 250_000_000.0
 OTROS_FIJOS_PROYECTO_MES = 280_000_000.0
 OPEX_LICENCIAS_MES = 14_180_736.67
 CAPEX_SOFTWARE = 34_650_000.0             # licencias perpetuas capitalizables
-DSO, DIO, DPO = 25, 17, 30                # dias (balance)
+DSO, DIO, DPO = 25, 17, 30                # dias (balance) — no gobernados por Sheets aun
 REF_XLSM = {"vpn": 2_180_752_718.0, "tir_anual": 0.2316,
             "ebitda_y1": 8_053_914_020.0}
 
-# ------------------------------ CAPEX (fuente unica; el Excel la importa)
+# ------------------------------ CAPEX (default/fallback; ver hoja CAPEX en Sheets)
 # (seccion, linea, activo, cant, moneda, costo_unit, vida_anios, categoria_dep)
 CAPEX_FILAS = [
     ("Benchmark retrofit", "L2 330 mL", "Upgrade lavadora retornable / prewash (KRONES Lavatec)", 1, "USD", 450_000, 10, "equipos"),
@@ -91,39 +106,202 @@ CAPEX_FILAS = [
 ]
 CONTINGENCIA = 0.10
 
-
-def _cop(fila) -> float:
-    _, _, _, cant, mon, unit, _, _ = fila
-    if mon == "USD":
-        return cant * unit * TRM * FACTOR_RFQ
-    if mon == "USD*":                      # cotizacion real: sin factor RFQ
-        return cant * unit * TRM
-    return cant * unit
-
-
-def capex() -> dict:
-    total_filas = sum(_cop(f) for f in CAPEX_FILAS)
-    celdas = sum(_cop(f) for f in CAPEX_FILAS if f[0].startswith("Celdas"))
-    por_cat: dict[str, float] = {}
-    for f in CAPEX_FILAS:
-        por_cat[f[7]] = por_cat.get(f[7], 0.0) + _cop(f)
-    return {"subtotal_cop": total_filas, "celdas_roboticas_cop": celdas,
-            "contingencia_cop": total_filas * CONTINGENCIA,
-            "total_cop": total_filas * (1 + CONTINGENCIA),
-            "depreciable_por_categoria": por_cat}
-
-
 VIDAS = {"equipos": 10, "automatizacion": 7, "servicios": 5,
          "intangibles": 3, "software": 3}
 
 
-def dep_mensual_total() -> float:
-    cx = capex()["depreciable_por_categoria"]
-    return sum(base / (VIDAS[cat] * 12) for cat, base in cx.items())
+# ------------------------------ overrides desde Sheets (TTL corto, in-proceso)
+_TTL_SEG = 60.0
+_CACHE: dict[str, tuple[float, object]] = {}
 
 
-def _maestro() -> pd.DataFrame:
-    return pd.read_csv(settings.DATA_DIR / "maestro_productos.csv").set_index("sku")
+def _cacheado(clave: str, cargar, forzar: bool = False):
+    """Cache en memoria del proceso con TTL corto: cada rerun de Streamlit
+    puede releer Sheets sin golpear la API en cada widget-interaction, y el
+    boton "Refrescar desde Sheets" de la UI puede forzar una lectura fresca
+    pasando forzar=True."""
+    ahora = time.time()
+    if not forzar and clave in _CACHE and ahora - _CACHE[clave][0] < _TTL_SEG:
+        return _CACHE[clave][1]
+    valor = cargar()
+    _CACHE[clave] = (ahora, valor)
+    return valor
+
+
+def _overrides_parametros(forzar: bool = False) -> dict:
+    def _cargar():
+        try:
+            from integrations.sheets_client import Contabilidad
+            return Contabilidad().leer_parametros()
+        except Exception:  # noqa: BLE001 — Sheets no disponible: sin overrides
+            return {}
+    return _cacheado("parametros", _cargar, forzar)
+
+
+def _overrides_capex(forzar: bool = False) -> list[tuple]:
+    def _cargar():
+        try:
+            from integrations.sheets_client import Contabilidad
+            return Contabilidad().leer_capex()
+        except Exception:  # noqa: BLE001
+            return []
+    return _cacheado("capex_filas", _cargar, forzar)
+
+
+def _num(valor, default: float) -> float:
+    """Castea un valor de celda de Sheets (texto tal como llega de gspread) a
+    float; admite miles con coma y porcentajes ("18%" -> 0.18). Ante celda
+    vacia o texto no numerico cae al default local — una celda mal
+    diligenciada nunca revienta el motor financiero."""
+    if valor is None or valor == "":
+        return default
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    texto = str(valor).strip().replace("$", "").replace(" ", "")
+    es_pct = texto.endswith("%")
+    if es_pct:
+        texto = texto[:-1]
+    texto = texto.replace(",", "")
+    try:
+        v = float(texto)
+    except ValueError:
+        return default
+    return v / 100 if es_pct else v
+
+
+_CLAVES_PARAMETROS = {
+    "TRM", "FACTOR_RFQ", "TMAR_ANUAL", "UPLIFT_THROUGHPUT", "FACTOR_MONETIZACION",
+    "RAMPA_MES5", "SCRAP_PP", "MANT_EVITADO_MES", "TASA_RENTA", "WC_PCT_INGRESO",
+    "CRECIMIENTO_DEMANDA_ANUAL", "FASES_CAPEX", "NOMINA_OPERACION_MES",
+    "NOMINA_IMPLEMENTACION_MES", "OTROS_FIJOS_BASE_MES", "OTROS_FIJOS_PROYECTO_MES",
+    "OPEX_LICENCIAS_MES", "CAPEX_SOFTWARE", "CONTINGENCIA",
+} | {f"VIDA_{cat}" for cat in VIDAS} | {
+    f"{campo}_{sku}" for campo in ("precio_venta_cop", "costo_material_cop") for sku in SKUS
+}
+
+
+def _parametros(forzar: bool = False) -> dict:
+    """Parametros escalares activos: default local salvo que Sheets (hoja
+    Parametros) traiga un valor valido para esa clave."""
+    ov = _overrides_parametros(forzar)
+    fases = FASES_CAPEX
+    fases_raw = ov.get("FASES_CAPEX")
+    if fases_raw not in (None, ""):
+        try:
+            partes = [float(x) for x in str(fases_raw).split(",")]
+            if len(partes) == PREOP and abs(sum(partes) - 1) < 0.02:
+                fases = partes
+        except ValueError:
+            pass
+    return {
+        "trm": _num(ov.get("TRM"), TRM),
+        "factor_rfq": _num(ov.get("FACTOR_RFQ"), FACTOR_RFQ),
+        "tmar_anual": _num(ov.get("TMAR_ANUAL"), TMAR_ANUAL),
+        "uplift_throughput": _num(ov.get("UPLIFT_THROUGHPUT"), UPLIFT_THROUGHPUT),
+        "factor_monetizacion": _num(ov.get("FACTOR_MONETIZACION"), FACTOR_MONETIZACION),
+        "rampa_mes5": _num(ov.get("RAMPA_MES5"), RAMPA_MES5),
+        "scrap_pp": _num(ov.get("SCRAP_PP"), SCRAP_PP),
+        "mant_evitado_mes": _num(ov.get("MANT_EVITADO_MES"), MANT_EVITADO_MES),
+        "tasa_renta": _num(ov.get("TASA_RENTA"), TASA_RENTA),
+        "wc_pct_ingreso": _num(ov.get("WC_PCT_INGRESO"), WC_PCT_INGRESO),
+        "crecimiento_demanda_anual": _num(ov.get("CRECIMIENTO_DEMANDA_ANUAL"),
+                                          CRECIMIENTO_DEMANDA_ANUAL),
+        "fases_capex": fases,
+        "nomina_operacion_mes": _num(ov.get("NOMINA_OPERACION_MES"), NOMINA_OPERACION_MES),
+        "nomina_implementacion_mes": _num(ov.get("NOMINA_IMPLEMENTACION_MES"),
+                                          NOMINA_IMPLEMENTACION_MES),
+        "otros_fijos_base_mes": _num(ov.get("OTROS_FIJOS_BASE_MES"), OTROS_FIJOS_BASE_MES),
+        "otros_fijos_proyecto_mes": _num(ov.get("OTROS_FIJOS_PROYECTO_MES"),
+                                         OTROS_FIJOS_PROYECTO_MES),
+        "opex_licencias_mes": _num(ov.get("OPEX_LICENCIAS_MES"), OPEX_LICENCIAS_MES),
+        "capex_software": _num(ov.get("CAPEX_SOFTWARE"), CAPEX_SOFTWARE),
+        "contingencia": _num(ov.get("CONTINGENCIA"), CONTINGENCIA),
+        "vidas": {cat: _num(ov.get(f"VIDA_{cat}"), anios) for cat, anios in VIDAS.items()},
+    }
+
+
+def _capex_filas_activas(forzar: bool = False) -> list[tuple]:
+    """CAPEX_FILAS activo: la tabla de la hoja 'CAPEX' de Sheets si trae al
+    menos una fila valida; si no, el default local de este modulo."""
+    filas = _overrides_capex(forzar)
+    return filas if filas else CAPEX_FILAS
+
+
+def _parseable(valor) -> bool:
+    """True si _num() lograria castear `valor` a numero (no si cayo al
+    default por celda vacia/invalida) — para reportar en la UI solo los
+    overrides que de verdad estan gobernando el motor."""
+    centinela = object()
+    return _num(valor, centinela) is not centinela  # type: ignore[comparison-overlap]
+
+
+def estado_fuente_financiera(forzar: bool = False) -> dict:
+    """Diagnostico para la UI: que tan 'vivo' es el dato ahora mismo — modo de
+    Contabilidad (sheets/excel), que claves de Parametros estan efectivamente
+    sobreescribiendo el default (parseadas con exito, no solo presentes en la
+    hoja), si el CAPEX viene de la hoja CAPEX, y el TTL del cache in-proceso."""
+    ov = _overrides_parametros(forzar)
+    filas_ov = _overrides_capex(forzar)
+    try:
+        from integrations.sheets_client import Contabilidad
+        modo = Contabilidad().modo
+    except Exception:  # noqa: BLE001
+        modo = "excel"
+    return {
+        "modo_contabilidad": modo,
+        "parametros_desde_sheets": sorted(k for k in ov if k in _CLAVES_PARAMETROS
+                                          and _parseable(ov.get(k))),
+        "capex_desde_sheets": bool(filas_ov),
+        "n_filas_capex_sheets": len(filas_ov),
+        "ttl_seg": _TTL_SEG,
+    }
+
+
+def _cop(fila, p: dict) -> float:
+    _, _, _, cant, mon, unit, _, _ = fila
+    if mon == "USD":
+        return cant * unit * p["trm"] * p["factor_rfq"]
+    if mon == "USD*":                      # cotizacion real: sin factor RFQ
+        return cant * unit * p["trm"]
+    return cant * unit
+
+
+def capex(forzar: bool = False, parametros: dict | None = None,
+          filas: list[tuple] | None = None) -> dict:
+    p = parametros or _parametros(forzar)
+    filas = filas if filas is not None else _capex_filas_activas(forzar)
+    total_filas = sum(_cop(f, p) for f in filas)
+    celdas = sum(_cop(f, p) for f in filas if f[0].startswith("Celdas"))
+    por_cat: dict[str, float] = {}
+    for f in filas:
+        por_cat[f[7]] = por_cat.get(f[7], 0.0) + _cop(f, p)
+    return {"subtotal_cop": total_filas, "celdas_roboticas_cop": celdas,
+            "contingencia_cop": total_filas * p["contingencia"],
+            "total_cop": total_filas * (1 + p["contingencia"]),
+            "depreciable_por_categoria": por_cat}
+
+
+def dep_mensual_total(forzar: bool = False, parametros: dict | None = None) -> float:
+    p = parametros or _parametros(forzar)
+    cx = capex(forzar, p)["depreciable_por_categoria"]
+    return sum(base / (p["vidas"][cat] * 12) for cat, base in cx.items())
+
+
+def _maestro(forzar: bool = False) -> pd.DataFrame:
+    """Unit economics por SKU: defaults de data/maestro_productos.csv,
+    sobreescritos si Sheets trae precio_venta_cop_<SKU> / costo_material_cop_
+    <SKU> en la hoja Parametros — mismo patron de override que el resto del
+    motor (Sheets manda, el CSV local es el fallback)."""
+    df = pd.read_csv(settings.DATA_DIR / "maestro_productos.csv").set_index("sku")
+    ov = _overrides_parametros(forzar)
+    for s in SKUS:
+        if s not in df.index:
+            continue
+        df.loc[s, "precio_venta_cop"] = _num(ov.get(f"precio_venta_cop_{s}"),
+                                             float(df.loc[s, "precio_venta_cop"]))
+        df.loc[s, "costo_material_cop"] = _num(ov.get(f"costo_material_cop_{s}"),
+                                               float(df.loc[s, "costo_material_cop"]))
+    return df
 
 
 def _demanda_base() -> pd.DataFrame:
@@ -134,43 +312,48 @@ def _demanda_base() -> pd.DataFrame:
     return pronostico_base().mensual
 
 
-def flujos_desde_demanda(demanda_mensual: pd.DataFrame | None = None) -> dict:
+def flujos_desde_demanda(demanda_mensual: pd.DataFrame | None = None,
+                         forzar_refresco: bool = False) -> dict:
     dem12 = (demanda_mensual if demanda_mensual is not None
              else _demanda_base()).reset_index(drop=True)
-    ma = _maestro()
+    p = _parametros(forzar_refresco)
+    ma = _maestro(forzar_refresco)
     precio = {s: float(ma.loc[s, "precio_venta_cop"]) for s in SKUS}
     costo = {s: float(ma.loc[s, "costo_material_cop"]) for s in SKUS}
-    cx = capex()
-    dep_mes = dep_mensual_total()
+    cx = capex(forzar_refresco, p)
+    dep_mes = dep_mensual_total(forzar_refresco, p)
 
     ingreso_b = np.zeros(MESES); cogs_b = np.zeros(MESES); u = np.zeros(MESES)
     for m in range(1, MESES + 1):
         fila = dem12.iloc[(m - 1) % 12]
-        crec = (1 + CRECIMIENTO_DEMANDA_ANUAL) ** ((m - 1) // 12)
+        crec = (1 + p["crecimiento_demanda_anual"]) ** ((m - 1) // 12)
         for s in SKUS:
             q = float(fila[f"{s}_unidades"]) * crec
             u[m - 1] += q
             ingreso_b[m - 1] += q * precio[s]
             cogs_b[m - 1] += q * costo[s]
 
-    rampa = np.zeros(MESES); rampa[PREOP] = RAMPA_MES5; rampa[PREOP + 1:] = 1.0
-    factor_v = 1 + rampa * UPLIFT_THROUGHPUT * FACTOR_MONETIZACION
+    rampa = np.zeros(MESES)
+    rampa[PREOP] = p["rampa_mes5"]
+    rampa[PREOP + 1:] = 1.0
+    factor_v = 1 + rampa * p["uplift_throughput"] * p["factor_monetizacion"]
     ingreso_p, cogs_p = ingreso_b * factor_v, cogs_b * factor_v
 
     op = np.arange(1, MESES + 1) > PREOP
-    ebitda_b = (ingreso_b - cogs_b - NOMINA_OPERACION_MES - OTROS_FIJOS_BASE_MES)
-    ahorro_scrap = cogs_p * SCRAP_PP * rampa
-    ebitda_p = (ingreso_p - cogs_p - NOMINA_OPERACION_MES
-                - np.where(op, OTROS_FIJOS_PROYECTO_MES, OTROS_FIJOS_BASE_MES)
-                - OPEX_LICENCIAS_MES + ahorro_scrap + MANT_EVITADO_MES * rampa)
+    ebitda_b = (ingreso_b - cogs_b - p["nomina_operacion_mes"] - p["otros_fijos_base_mes"])
+    ahorro_scrap = cogs_p * p["scrap_pp"] * rampa
+    ebitda_p = (ingreso_p - cogs_p - p["nomina_operacion_mes"]
+                - np.where(op, p["otros_fijos_proyecto_mes"], p["otros_fijos_base_mes"])
+                - p["opex_licencias_mes"] + ahorro_scrap
+                + p["mant_evitado_mes"] * rampa)
     ebitda_inc = ebitda_p - ebitda_b
 
     dep = np.where(op, dep_mes, 0.0)
-    impuesto = TASA_RENTA * np.maximum(ebitda_inc - dep, 0.0)
+    impuesto = p["tasa_renta"] * np.maximum(ebitda_inc - dep, 0.0)
     fcf = ebitda_inc - impuesto
-    fcf[:PREOP] = (-cx["total_cop"] * np.array(FASES_CAPEX)
-                   - NOMINA_IMPLEMENTACION_MES - OPEX_LICENCIAS_MES)
-    wc = WC_PCT_INGRESO * float((ingreso_p - ingreso_b)[PREOP + 1])
+    fcf[:PREOP] = (-cx["total_cop"] * np.array(p["fases_capex"])
+                   - p["nomina_implementacion_mes"] - p["opex_licencias_mes"])
+    wc = p["wc_pct_ingreso"] * float((ingreso_p - ingreso_b)[PREOP + 1])
     fcf[PREOP] -= wc
     fcf[-1] += wc
 
@@ -180,7 +363,7 @@ def flujos_desde_demanda(demanda_mensual: pd.DataFrame | None = None) -> dict:
             "cogs_base": cogs_b, "cogs_proyecto": cogs_p,
             "ahorro_scrap": ahorro_scrap, "depreciacion": dep,
             "impuesto": impuesto, "capital_trabajo": wc, "capex": cx,
-            "unidades": u, "dep_mensual": dep_mes}
+            "unidades": u, "dep_mensual": dep_mes, "parametros": p}
 
 
 def _tir_mensual(flujos: np.ndarray) -> float:
@@ -194,11 +377,13 @@ def _tir_mensual(flujos: np.ndarray) -> float:
 
 
 def indicadores(demanda_mensual: pd.DataFrame | None = None,
-                escenario: str = "Base") -> dict:
-    d = flujos_desde_demanda(demanda_mensual)
+                escenario: str = "Base", forzar_refresco: bool = False) -> dict:
+    d = flujos_desde_demanda(demanda_mensual, forzar_refresco)
+    p = d["parametros"]
+    tmar_mensual = (1 + p["tmar_anual"]) ** (1 / 12) - 1
     f = d["fcf"]
     t = np.arange(1, MESES + 1)
-    desc = f / (1 + TMAR_MENSUAL) ** t
+    desc = f / (1 + tmar_mensual) ** t
     acum, acum_desc = np.cumsum(f), np.cumsum(desc)
     inversion = -float(f[:PREOP].sum())
     tir_m = _tir_mensual(f)
@@ -216,7 +401,7 @@ def indicadores(demanda_mensual: pd.DataFrame | None = None,
             "payback_simple_meses": pb, "payback_descontado_meses": pbd,
             "ebitda_incremental_y1_cop": float(d["ebitda_incremental"][PREOP:PREOP + 12].sum()),
             "capital_trabajo_cop": d["capital_trabajo"],
-            "dep_mensual_cop": d["dep_mensual"], "tmar_anual": TMAR_ANUAL,
+            "dep_mensual_cop": d["dep_mensual"], "tmar_anual": p["tmar_anual"],
             "delta_vs_modelo_original": {
                 "vpn_pct": round((vpn / REF_XLSM["vpn"] - 1) * 100, 1),
                 "nota": "referencia: xlsm (flujo agregado no ligado a demanda)"},
@@ -224,20 +409,24 @@ def indicadores(demanda_mensual: pd.DataFrame | None = None,
             "acumulado_descontado": acum_desc, "detalle": d}
 
 
-def sensibilidad(demanda_mensual: pd.DataFrame | None = None) -> pd.DataFrame:
+def sensibilidad(demanda_mensual: pd.DataFrame | None = None,
+                 forzar_refresco: bool = False) -> pd.DataFrame:
     """Tres escenarios de la base financiera: factores sobre EBITDA inc./CAPEX
-    y TMAR distinta (mismos del xlsm: Conservador/Base/Optimista)."""
-    d = flujos_desde_demanda(demanda_mensual)
+    y TMAR distinta (mismos del xlsm: Conservador/Base/Optimista). Los
+    factores de sensibilidad son de analisis (no se leen de Sheets); el CAPEX,
+    nomina y licencias de base si respetan los overrides activos."""
+    d = flujos_desde_demanda(demanda_mensual, forzar_refresco)
+    p = d["parametros"]
     casos = [("Conservador", 0.95, 1.15, 0.20), ("Base", 1.00, 1.00, 0.18),
              ("Optimista", 1.05, 0.90, 0.16)]
     filas = []
     for nombre, f_v, f_cx, tmar in casos:
         ebitda = d["ebitda_incremental"] * f_v
         dep = d["depreciacion"]
-        imp = TASA_RENTA * np.maximum(ebitda - dep, 0.0)
+        imp = p["tasa_renta"] * np.maximum(ebitda - dep, 0.0)
         f = ebitda - imp
-        f[:PREOP] = (-d["capex"]["total_cop"] * f_cx * np.array(FASES_CAPEX)
-                     - NOMINA_IMPLEMENTACION_MES - OPEX_LICENCIAS_MES)
+        f[:PREOP] = (-d["capex"]["total_cop"] * f_cx * np.array(p["fases_capex"])
+                     - p["nomina_implementacion_mes"] - p["opex_licencias_mes"])
         f[PREOP] -= d["capital_trabajo"]; f[-1] += d["capital_trabajo"]
         i_m = (1 + tmar) ** (1 / 12) - 1
         desc = f / (1 + i_m) ** np.arange(1, MESES + 1)
@@ -257,5 +446,6 @@ if __name__ == "__main__":
           f"ROI60m {ind['roi_horizonte_60m']*100:.1f}% · payback "
           f"{ind['payback_simple_meses']}/{ind['payback_descontado_meses']} m")
     print(f"Δ vs xlsm: {ind['delta_vs_modelo_original']['vpn_pct']:+.1f}%")
+    print(f"Fuente parametros: {estado_fuente_financiera()}")
     print("\nSensibilidad:")
     print(sensibilidad().to_string(index=False))

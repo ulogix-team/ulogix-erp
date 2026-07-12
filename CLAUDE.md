@@ -15,9 +15,11 @@ Flujo completo: pronóstico de demanda → escenarios → inventario (s,Q) / MRP
 financieros conectados a la demanda.
 
 **Repositorio hermano:** `../femsa-modelo-financiero` genera el libro Excel de 23
-hojas que se conecta al ERP por la API de Google Sheets. Los dos repos comparten
-**fuente única de verdad**: el generador del libro importa `CAPEX_FILAS`, `VIDAS`
-de `core/finanzas_negocio.py` y las tablas de `core/tiempos_oee.py` de este repo.
+hojas que se conecta al ERP por la API de Google Sheets. El generador importa
+`CAPEX_FILAS`, `VIDAS` de `core/finanzas_negocio.py` y las tablas de
+`core/tiempos_oee.py` de este repo, pero solo como **seed inicial** del libro
+— ver decisión de diseño #3: para CAPEX/turnos/precios, el libro de Sheets ya
+editado por el usuario manda sobre esas constantes, no al revés.
 
 ## Arquitectura
 
@@ -49,7 +51,7 @@ nombres de servicio.
 | `core/escenarios.py` | 6 presets + escenario personalizado (elasticidades **por producto**) |
 | `core/inventario.py` | Política (s,Q) Monte Carlo + MRP |
 | `core/tiempos_oee.py` | Tiempos y OEE **documentales** (auditoría corregida) |
-| `core/finanzas_negocio.py` | **Motor financiero demand-driven** + `CAPEX_FILAS` (fuente única) |
+| `core/finanzas_negocio.py` | **Motor financiero demand-driven**; `CAPEX_FILAS`/`TRM`/`TMAR`/... son el **default/fallback** — la fuente viva es la hoja `Parametros`/`CAPEX` de Sheets |
 | `core/sensibilidad.py` | Tornado paramétrico |
 | `integrations/uns.py` | Interpreta `config/uns_femsa.yaml` (63 tópicos) |
 | `integrations/mqtt_middleware.py` | Suscribe UNS, cumple POs, publica rama ERP retained |
@@ -70,8 +72,35 @@ nombres de servicio.
    `A4:F16` e `Inventarios` en `A4:I8` **posicionalmente** (`_escribir_rango()`),
    porque las hojas financieras referencian esas celdas con fórmulas. Un
    clear+append las rompería.
-3. **Fuente única del CAPEX.** `CAPEX_FILAS` vive en `core/finanzas_negocio.py`;
-   el generador del Excel la importa. No duplicar cifras.
+3. **CAPEX/turnos/precios: Sheets gobierna, Python es el fallback (cambió de
+   dirección a propósito).** Decisión original: `CAPEX_FILAS` vivía en
+   `core/finanzas_negocio.py` como **fuente única** y el generador del Excel
+   la importaba — "no duplicar cifras". Por pedido explícito del dueño del
+   proyecto ("quiero que las unit economics y todo tema financiero se tome de
+   la hoja de Sheets, no de un maestro local... el ERP se tiene que
+   actualizar según cualquier cambio del documento de Sheets") esa dirección
+   se **invirtió**: ahora el libro de Google Sheets (hojas `Parametros` — TRM,
+   TMAR, nómina, otros fijos, licencias, vidas útiles, unit economics por
+   SKU — y `CAPEX` — tabla completa) es la fuente **viva** que el usuario
+   edita a mano, y `core/finanzas_negocio.py` la lee en cada llamada
+   (`_parametros()`/`_capex_filas_activas()`/`_maestro()`, TTL de 60 s en
+   memoria vía `integrations/sheets_client.py: leer_parametros()`/
+   `leer_capex()`) con un botón "🔄 Refrescar desde Sheets" en la página
+   *Finanzas* para forzar la lectura. Las constantes de módulo (`CAPEX_FILAS`,
+   `TRM`, `TMAR_ANUAL`, etc.) **siguen existiendo** pero ahora son el
+   default/fallback: se usan tal cual si Sheets no está configurado, la hoja
+   está vacía/con encabezado distinto, o una celda no castea a número — el
+   motor da los mismos resultados de siempre en ese caso (`tools/
+   verificacion.py`, paso "Caso de negocio", sigue exigiendo
+   `payback_simple_meses == 33`). El generador del libro hermano
+   (`../femsa-modelo-financiero`) sigue importando esas constantes, pero ahora
+   son solo el **seed** con el que se puebla el libro la primera vez, no la
+   fuente de verdad en operación — no vuelvas a llamarlo "fuente única" en
+   código o docs nuevos. Contrato completo de columnas en
+   `docs/INTEGRACION_APIS.md` §1 y en el skill `modelo-financiero-ulogix`.
+   El maestro físico que usa Odoo/MRP (`data/maestro_productos.csv`) es un
+   dato **separado** y no lo gobierna esta hoja de Sheets — ver la nota en
+   ese mismo skill si hace falta mantenerlos consistentes.
 4. **`t_ciclo_ideal` ≠ `t_ciclo`** y **takt ≠ tiempo de ciclo**. Errores
    conceptuales ya corregidos; no reintroducirlos.
 5. **Hilos BLAS en 1** (`OPENBLAS_NUM_THREADS=1` etc. en Dockerfile y compose):
@@ -178,3 +207,11 @@ Estas credenciales son de desarrollo y se rotarán.
 - Costeo/valoración de inventario, checkpoints de calidad, reposición
   automática de clientes y registro de cobro (`account.payment`) contra la
   factura de cliente — el flujo venta→factura ya existe, falta el cobro.
+- Confirmar contra el libro real la estructura de `Parametros`/`CAPEX` (nombres
+  de claves, si ya hay datos con esos nombres) antes de asumir que el contrato
+  documentado en `docs/INTEGRACION_APIS.md` calza sin ajustes.
+- El generador del repo hermano (`../femsa-modelo-financiero/tools/
+  generar_modelo.py`) todavía sobreescribe `Parametros`/`CAPEX` con el seed de
+  Python en cada regeneración — falta hacerlo "merge-aware" (no pisar valores
+  que el usuario ya editó en Drive) si se va a regenerar el libro en
+  producción con frecuencia.

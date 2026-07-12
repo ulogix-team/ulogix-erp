@@ -117,6 +117,14 @@ def datos_pronostico(mc_n: int = 10000):
         state_store.guardar_pronostico(r.mensual, "Base")
     except Exception:
         pass
+    try:  # ERP -> Sheets: la demanda Base tambien llega sola al libro (hoja
+          # 'Demanda', rango fijo) sin depender de que alguien apriete un
+          # boton en la pagina Finanzas — st.cache_data hace que esto corra
+          # solo cuando el pronostico realmente cambia, no en cada rerun.
+        from integrations.sheets_client import Contabilidad
+        Contabilidad().publicar_demanda(r.mensual, "Base")
+    except Exception:
+        pass
     return {"mensual": r.mensual, "trimestral": r.trimestral,
             "metricas": r.metricas, "supuestos": r.supuestos,
             "historico_mensual": r.historico_mensual,

@@ -26,25 +26,60 @@ correo**.
    (`docker compose -f docker-compose.dashboard.yml restart`).
 5. Página **Pruebas** → *Probar Sheets*: escribe y relee la hoja `_PruebaAPI`.
 
-**Contrato de hojas (por área del ERP).** La app **lee** `Parametros` y
-**escribe**:
+**Contrato de hojas (por área del ERP).** Dos direcciones conviven en el mismo
+libro: el ERP **escribe** demanda/inventario/compras, y desde esta versión
+**lee** CAPEX/turnos/precios/unit-economics de vuelta — el usuario edita esas
+hojas a mano y el motor financiero (`core/finanzas_negocio.py`) las recoge en
+el siguiente render (TTL de 60 s en memoria, o el botón **🔄 Refrescar desde
+Sheets** de la página Finanzas para forzarlo al instante):
 
-| Área | Hoja | Método | Rango |
-|---|---|---|---|
-| Ventas | `Demanda` (pronóstico Base) | `publicar_demanda()` | **fijo A4:F16** |
-| Ventas | `DemandaEscenario` (escenario activo) | `publicar_demanda_escenario()` — se dispara al **Activar** en la página Escenarios | **fijo A4:F16** |
-| Inventario | `Inventarios` (política s,Q) | `publicar_inventarios()` — al simular en la página Inventario | **fijo A4:I8** |
-| Compras | `PlanCompras` | `registrar_plan_compras()` | reemplazo |
-| Producción | `LibroProduccion` / `ResumenMensual` / `KPIs_UNS` | middleware/sync | append/reemplazo |
+| Área | Hoja | Dirección | Método | Rango |
+|---|---|---|---|---|
+| Ventas | `Demanda` (pronóstico Base) | ERP → Sheets | `publicar_demanda()` — se dispara solo al recalcular el pronóstico (`app/ui/theme.py:datos_pronostico()`, cacheado) | **fijo A4:F16** |
+| Ventas | `DemandaEscenario` (escenario activo) | ERP → Sheets | `publicar_demanda_escenario()` — se dispara al **Activar** en la página Escenarios | **fijo A4:F16** |
+| Inventario | `Inventarios` (política s,Q) | ERP → Sheets | `publicar_inventarios()` — al simular en la página Inventario | **fijo A4:I8** |
+| Compras | `PlanCompras` | ERP → Sheets | `publicar_plan_compras()` | reemplazo |
+| Producción | `LibroProduccion` / `ResumenMensual` / `KPIs_UNS` | ERP → Sheets | middleware/sync | append/reemplazo |
+| Financiero | `Parametros` (pares clave-valor: TRM, TMAR, nómina, otros fijos, licencias, vidas útiles, unit economics por SKU...) | **Sheets → ERP** | `leer_parametros()` | pares clave-valor, cualquier fila |
+| Financiero | `CAPEX` (tabla: sección, línea, activo, cantidad, moneda, costo_unitario, vida_años, categoría_dep) | **Sheets → ERP** | `leer_capex()` | tabla con encabezado exacto |
 
-Los rangos **fijos** existen porque las hojas financieras (`ER_Proyecto`,
-`Flujo_Caja`, `Balance`, `FinancieroEscenario`, `Inventarios·rotación`)
-referencian esas celdas con fórmulas: la app escribe posicionalmente sin
-romperlas. **`Tiempos` y `OEE_TEEP` son DOCUMENTALES** (referencia de
-ingeniería del estudio corregido, no conectadas) y **el ERP no gestiona
-OEE/TEEP**: esos KPIs solo llegan por MQTT según el UNS a `KPIs_UNS`.
+**Contrato de la hoja `Parametros` para el motor financiero** (todas las
+claves son opcionales — si faltan o el valor no castea a número, el motor usa
+su default local, documentado en `core/finanzas_negocio.py`):
+`TRM`, `FACTOR_RFQ`, `TMAR_ANUAL`, `UPLIFT_THROUGHPUT`, `FACTOR_MONETIZACION`,
+`RAMPA_MES5`, `SCRAP_PP`, `MANT_EVITADO_MES`, `TASA_RENTA`, `WC_PCT_INGRESO`,
+`CRECIMIENTO_DEMANDA_ANUAL`, `FASES_CAPEX` (texto `"0.20,0.35,0.27,0.18"`),
+`NOMINA_OPERACION_MES`, `NOMINA_IMPLEMENTACION_MES`, `OTROS_FIJOS_BASE_MES`,
+`OTROS_FIJOS_PROYECTO_MES`, `OPEX_LICENCIAS_MES`, `CAPEX_SOFTWARE`,
+`CONTINGENCIA`, `VIDA_equipos` / `VIDA_automatizacion` / `VIDA_servicios` /
+`VIDA_intangibles` / `VIDA_software` (años de depreciación por categoría), y
+unit economics por SKU: `precio_venta_cop_<SKU>` / `costo_material_cop_<SKU>`
+(p.ej. `precio_venta_cop_P1-CC350-RGB`). Los valores admiten separador de
+miles (`,`) y `%` (p.ej. `TMAR_ANUAL` = `18%` o `0.18`, da igual). Esta hoja
+**no** gobierna el maestro físico que usa Odoo/MRP (`data/maestro_productos.csv`
+vía `core/forecast.cargar_maestro()`) — solo las unit economics del caso de
+negocio de `core/finanzas_negocio.py`; ver decisión de diseño #3 en `CLAUDE.md`.
+
+**Contrato de la hoja `CAPEX`**: fila 1 debe ser exactamente el encabezado
+`seccion, linea, activo, cantidad, moneda, costo_unitario, vida_anios,
+categoria_dep` (mismo orden que `CAPEX_FILAS` en `core/finanzas_negocio.py`);
+`moneda` es `COP`, `USD` (aplica `FACTOR_RFQ`) o `USD*` (cotización real, sin
+factor RFQ). Si la hoja no existe, está vacía o el encabezado no calza
+exactamente, el motor cae a su `CAPEX_FILAS` local — no hay error visible al
+usuario, solo se ignora la hoja.
+
+Los rangos **fijos** de `Demanda`/`DemandaEscenario`/`Inventarios` existen
+porque las hojas financieras (`ER_Proyecto`, `Flujo_Caja`, `Balance`,
+`FinancieroEscenario`, `Inventarios·rotación`) referencian esas celdas con
+fórmulas: la app escribe posicionalmente sin romperlas — eso **no cambió**.
+**`Tiempos` y `OEE_TEEP` son DOCUMENTALES** (referencia de ingeniería del
+estudio corregido, no conectadas) y **el ERP no gestiona OEE/TEEP**: esos
+KPIs solo llegan por MQTT según el UNS a `KPIs_UNS`.
 Si el ID no está configurado, todo cae a un Excel local
-(`data/contabilidad_local.xlsx`) con la misma estructura: cero pérdida.
+(`data/contabilidad_local.xlsx`) con la misma estructura: cero pérdida — y el
+motor financiero da exactamente los mismos números que con sus constantes
+hardcodeadas de antes (verificado en el paso "Caso de negocio" de
+`tools/verificacion.py`).
 
 **Si crea una credencial nueva:** Google Cloud Console → proyecto → *IAM y
 administración → Cuentas de servicio → Claves → Agregar clave (JSON)* →
@@ -164,3 +199,9 @@ recepción en `FEMSA/_pruebas/Process/Ping`), autenticación + versión de Odoo 
 PO de prueba, escritura/relectura en Sheets y lectura de `Parametros`.
 Todo error muestra la causa y el remedio (ACL del broker, `ODOO_USER` faltante,
 libro sin compartir, etc.).
+
+Página **Finanzas**, sección "Caso de negocio": muestra si el motor está
+gobernado por Sheets o corriendo en fallback local (`core.finanzas_negocio.
+estado_fuente_financiera()`), qué claves de `Parametros` están activas y si
+`CAPEX` trajo filas — con botón **🔄 Refrescar desde Sheets** para forzar una
+relectura inmediata sin esperar el TTL de 60 s.

@@ -32,7 +32,14 @@ st.caption(f"Backend contable: **{destino}** (configura `SHEETS_SPREADSHEET_ID` 
            "cuenta de servicio para pasar a Google Sheets; el codigo no cambia).")
 
 # ------------------------------------------------------------------ unit economics
-st.subheader("Unit economics (parametros editables en data/maestro_productos.csv)")
+st.subheader("Unit economics (maestro de productos — datos fisicos y precio base)")
+st.caption("Esta tabla es el maestro fisico (`data/maestro_productos.csv`: EAN, "
+           "empaque, precio/costo base) que tambien alimenta Odoo/MRP. El "
+           "**caso de negocio** de mas abajo usa unit economics separadas, "
+           "gobernadas desde la hoja `Parametros` de Sheets (claves "
+           "`precio_venta_cop_<SKU>` / `costo_material_cop_<SKU>`) con este "
+           "mismo maestro como fallback — asi el escenario financiero se puede "
+           "ajustar sin tocar el maestro que ve Odoo.")
 ue = maestro[["sku", "nombre", "precio_venta_cop", "costo_material_cop"]].copy()
 ue["margen_unit_cop"] = ue["precio_venta_cop"] - ue["costo_material_cop"]
 ue["margen_pct"] = (100 * ue["margen_unit_cop"] / ue["precio_venta_cop"]).round(1)
@@ -143,7 +150,13 @@ st.caption("Lectura: el ranking indica donde invertir en mejor informacion — p
 # ================================================================ caso de negocio
 st.divider()
 st.subheader("Caso de negocio del retrofit — conectado a la demanda")
-from core.finanzas_negocio import indicadores  # noqa: E402
+from core.finanzas_negocio import estado_fuente_financiera, indicadores  # noqa: E402
+
+if st.session_state.pop("_forzar_refresco_fin", False):
+    fuente = estado_fuente_financiera(forzar=True)
+    st.toast("Parametros y CAPEX releidos desde Sheets/Excel.")
+else:
+    fuente = estado_fuente_financiera()
 
 nombre_activo, dem_activa = theme.demanda_activa()
 ind_base = indicadores(theme.datos_pronostico()["mensual"], "Base")
@@ -157,6 +170,30 @@ st.caption(f"El FCF de 60 meses se construye **desde el pronostico de demanda po
            "trabajo. El mismo motor vive como formulas en las hojas "
            "**Financiero** (base) y **FinancieroEscenario** (demanda elegida "
            "en el ERP) del libro conectado.")
+
+cfa, cfb = st.columns([4, 1])
+with cfa:
+    if fuente["modo_contabilidad"] == "sheets":
+        vivos = fuente["parametros_desde_sheets"]
+        txt_capex = (f"CAPEX: **{fuente['n_filas_capex_sheets']} filas desde la hoja "
+                     "'CAPEX'**" if fuente["capex_desde_sheets"]
+                     else "CAPEX: hoja 'CAPEX' vacia/ausente -> usando default local")
+        txt_params = (f"{len(vivos)} parametro(s) sobreescritos desde 'Parametros': "
+                      f"{', '.join(vivos)}" if vivos
+                      else "hoja 'Parametros' sin overrides activos -> defaults locales")
+        st.success(f"📗 Gobernado por Google Sheets (TTL {fuente['ttl_seg']:.0f}s). "
+                   f"{txt_capex}. {txt_params}.", icon="📗")
+    else:
+        st.info("📄 Google Sheets no esta configurado o cayo a fallback: el caso de "
+                "negocio usa los defaults locales de `core/finanzas_negocio.py` "
+                "(CAPEX_FILAS, TRM, TMAR, nomina, otros fijos...). Configura "
+                "`SHEETS_SPREADSHEET_ID` y las hojas `Parametros`/`CAPEX` para que "
+                "el usuario pueda ajustar CAPEX/turnos/precios sin tocar codigo.",
+                icon="📄")
+with cfb:
+    if st.button("🔄 Refrescar desde Sheets", width="stretch"):
+        st.session_state["_forzar_refresco_fin"] = True
+        st.rerun()
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("CAPEX total", f"$ {ind['capex_total_cop']/1e9:,.2f} MM COP",

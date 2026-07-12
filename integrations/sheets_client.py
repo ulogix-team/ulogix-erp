@@ -252,7 +252,19 @@ class Contabilidad:
 
     def leer_parametros(self) -> dict:
         """Lee la hoja Parametros (pares clave-valor) del libro en Drive; asi el
-        libro de Sheets puede gobernar parametros del ERP. Fallback: Excel local."""
+        libro de Sheets puede gobernar parametros del ERP. Fallback: Excel local.
+
+        Contrato de claves que hoy consume `core.finanzas_negocio` (todas
+        opcionales; si faltan, el motor usa su default local): TRM,
+        FACTOR_RFQ, TMAR_ANUAL, UPLIFT_THROUGHPUT, FACTOR_MONETIZACION,
+        RAMPA_MES5, SCRAP_PP, MANT_EVITADO_MES, TASA_RENTA, WC_PCT_INGRESO,
+        CRECIMIENTO_DEMANDA_ANUAL, FASES_CAPEX ("0.20,0.35,0.27,0.18"),
+        NOMINA_OPERACION_MES, NOMINA_IMPLEMENTACION_MES, OTROS_FIJOS_BASE_MES,
+        OTROS_FIJOS_PROYECTO_MES, OPEX_LICENCIAS_MES, CAPEX_SOFTWARE,
+        CONTINGENCIA, VIDA_equipos/VIDA_automatizacion/VIDA_servicios/
+        VIDA_intangibles/VIDA_software (anios), y unit economics por SKU:
+        precio_venta_cop_<SKU> / costo_material_cop_<SKU> (p.ej.
+        `precio_venta_cop_P1-CC350-RGB`)."""
         try:
             if self.modo == "sheets":
                 ws = self._spreadsheet().worksheet("Parametros")
@@ -273,6 +285,46 @@ class Contabilidad:
             if len(fila) >= 2 and str(fila[0]).strip():
                 out[str(fila[0]).strip()] = fila[1]
         return out
+
+    ENC_CAPEX = ["seccion", "linea", "activo", "cantidad", "moneda",
+                "costo_unitario", "vida_anios", "categoria_dep"]
+
+    def leer_capex(self) -> list[tuple]:
+        """Lee la hoja 'CAPEX' (tabla, mismo esquema que CAPEX_FILAS de
+        core.finanzas_negocio: seccion, linea, activo, cantidad, moneda,
+        costo_unitario, vida_anios, categoria_dep) para que el CAPEX se
+        gobierne desde Sheets en vez de la constante local. Fallback: lista
+        vacia si la hoja no existe, esta vacia o no calza el encabezado
+        esperado — el motor financiero cae entonces a su CAPEX_FILAS local."""
+        try:
+            if self.modo == "sheets":
+                ws = self._spreadsheet().worksheet("CAPEX")
+                filas = ws.get_all_values()
+            else:
+                raise RuntimeError("modo excel")
+        except Exception:  # noqa: BLE001
+            from openpyxl import load_workbook
+            if not settings.LEDGER_XLSX.exists():
+                return []
+            wb = load_workbook(settings.LEDGER_XLSX, read_only=True)
+            if "CAPEX" not in wb.sheetnames:
+                return []
+            filas = [[c if c is not None else "" for c in row]
+                     for row in wb["CAPEX"].iter_rows(values_only=True)]
+        if not filas or [str(c).strip() for c in filas[0][:8]] != self.ENC_CAPEX:
+            return []
+        salida = []
+        for fila in filas[1:]:
+            if len(fila) < 8 or not str(fila[0]).strip():
+                continue
+            try:
+                salida.append((str(fila[0]).strip(), str(fila[1]).strip(),
+                               str(fila[2]).strip(), float(fila[3]),
+                               str(fila[4]).strip(), float(fila[5]),
+                               float(fila[6]), str(fila[7]).strip()))
+            except (TypeError, ValueError):
+                continue  # fila mal diligenciada: se ignora, no revienta el motor
+        return salida
 
     def probar(self) -> dict:
         """Prueba de conectividad: escribe y relee una celda de verificacion."""
