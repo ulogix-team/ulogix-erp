@@ -219,12 +219,18 @@ El middleware:
 
 | Acción | Tópicos |
 |---|---|
-| Se suscribe | `FEMSA/+/MES/KPI/#` · `FEMSA/+/MES/Maintance/#` · `FEMSA/+/Process/#` · legado `plant/+/production` |
+| Se suscribe | `FEMSA/+/MES/KPI/#` · `FEMSA/+/MES/Maintance/#` · `FEMSA/+/Process/#` · `FEMSA/MES/KPI/#` · `FEMSA/MES/Maintance/#` (agregado de **planta completa**, sin línea) · legado `plant/+/production` |
 | Publica (retained) | `FEMSA/LineaX/ERP/{OrderNumber, OrderStatus, ScheduleStart, ScheduleEnd, ActualStart, ActualEnd, AvailableQuantity, ReservedQuantity, OrderedQuantity}` |
 
-- **KPI**: número plano (`0.7712`) o JSON `{"value": 0.7712}` → tabla `kpi_uns`
-  (tableros en páginas *Producción* y *Base de datos*), sincronizable a la hoja
-  `KPIs_UNS`.
+- **KPI**: 9 hojas por línea — `Availability, Quality, Performance, OEE, TEEP,
+  DT, MTTR, MTBF, MLT` — número plano (`0.7712`) o JSON `{"value": 0.7712}` →
+  tabla `kpi_uns` (tableros en páginas *Producción* y *Base de datos*),
+  sincronizable a la hoja `KPIs_UNS`. **Verificado contra el broker real
+  (Coreflux, conectándose directo y suscribiendo a `#`):** las mismas 9 hojas
+  de KPI y 4 de mantenimiento existen también a **nivel de planta completa**
+  (`FEMSA/MES/KPI/...`, sin segmento de línea) — `interpretar_topico()` las
+  reconoce como `linea='PLANTA'`, mismo `kpi_uns`, misma tabla en el
+  dashboard (fila `PLANTA`), sin vista aparte.
 - **Producción**: la rama `Process` está libre en el YAML; por convención el
   middleware toma `GoodCount / Count / Produccion / Production / value` como
   unidades buenas → descuenta la PO abierta de la línea (FIFO) → al completarla
@@ -241,6 +247,14 @@ mosquitto_sub -h 100.123.104.31 -t "FEMSA/+/ERP/#" -v   # ver la rama ERP reteni
 O todo con Docker: `docker compose -f docker-compose.dashboard.yml up -d`
 (servicios `dashboard` + `middleware`, con `data/` y `middleware/` como
 volúmenes para que la base ERP sobreviva reinicios).
+
+**Otros tópicos del broker que NO son parte del UNS FEMSA** (vistos
+suscribiendo a `#` directamente en Coreflux Hub, el panel del broker en
+`:8080`): `celda/status/nodered` (liveness del bridge Node-RED, fuera del
+namespace `FEMSA/` — relacionado con el pendiente "Flujo de Node-RED que
+puentee Ignition → UNS" de `CLAUDE.md`, no bridgeado todavía) y `Agent/*`
+(telemetría interna del propio Coreflux Hub con IA — irrelevante para
+nuestro UNS, ignorar).
 
 ---
 

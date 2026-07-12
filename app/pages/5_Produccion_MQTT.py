@@ -112,14 +112,20 @@ with st.expander("Contrato UNS (config/uns_femsa.yaml) — para Node-RED / Ignit
     st.markdown(f"""
 **Suscripciones del middleware** (QoS {settings.MQTT_QOS}):
 `FEMSA/+/MES/KPI/#` · `FEMSA/+/MES/Maintance/#` · `FEMSA/+/Process/#` ·
-legado `{settings.MQTT_TOPIC_BASE}/+/production`
+`FEMSA/MES/KPI/#` · `FEMSA/MES/Maintance/#` (agregado de **planta completa**,
+sin linea) · legado `{settings.MQTT_TOPIC_BASE}/+/production`
 
 **Hojas KPI por linea** (numero plano o JSON `{{"value": x}}`):
-`Availability, Quality, Performance, OEE, TEEP, DT, MTTR, MTBF`
+`Availability, Quality, Performance, OEE, TEEP, DT, MTTR, MTBF, MLT`
 ```
 FEMSA/Linea1/MES/KPI/OEE            0.7712
 FEMSA/Linea2/MES/Maintance/MaintanceStatus   OK
+FEMSA/MES/KPI/OEE                   0.8069   (planta completa, sin linea)
 ```
+Verificado contra el broker real (Coreflux): las mismas 9 hojas de KPI y 4 de
+mantenimiento existen tambien **a nivel planta**, sin segmento de linea —
+`interpretar_topico()` las reconoce como `linea='PLANTA'` y quedan en la
+misma tabla `kpi_uns` y el mismo tablero de abajo, sin vista aparte.
 
 **Conteo de produccion** — la rama `Process` esta libre en el YAML; el
 middleware toma por convencion las hojas `GoodCount / Count / Produccion /
@@ -152,9 +158,12 @@ if kpis:
             .pivot_table(index="linea", columns="kpi", values="valor_num",
                          aggfunc="last").round(4))
     _orden = [c for c in ["OEE", "Availability", "Performance", "Quality",
-                          "TEEP", "DT", "MTTR", "MTBF"] if c in _piv.columns]
+                          "TEEP", "DT", "MTTR", "MTBF", "MLT"] if c in _piv.columns]
     st.dataframe(_piv[_orden + [c for c in _piv.columns if c not in _orden]],
                  width="stretch")
+    if "PLANTA" in _piv.index:
+        st.caption("`PLANTA` = agregado de toda la planta (broker real), no de "
+                   "una linea especifica.")
 else:
     st.caption("Sin KPIs aun — publica a `FEMSA/LineaX/MES/KPI/...` o corre el "
                "simulador.")

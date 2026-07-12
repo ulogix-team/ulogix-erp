@@ -16,29 +16,46 @@ de ingeniería del estudio corregido), no están conectadas a nada.
 
 ## El árbol
 
-Definido en `config/uns_femsa.yaml` (63 tópicos-hoja, **no editar sin acordarlo
+Definido en `config/uns_femsa.yaml` (79 tópicos-hoja, **no editar sin acordarlo
 con la planta**). Lo interpreta `integrations/uns.py`:
 
 ```python
 from integrations import uns
-uns.hojas()                                   # 63 tópicos
+uns.hojas()                                   # 79 topicos
 uns.suscripciones()                           # patrones del middleware
 uns.interpretar_topico("FEMSA/Linea2/ERP/OrderStatus")  # {'linea': 'L2', 'hoja': 'OrderStatus', ...}
+uns.interpretar_topico("FEMSA/MES/KPI/OEE")   # {'linea': 'PLANTA', 'hoja': 'OEE', ...} (sin linea)
 uns.UNS_DE_LINEA                              # {'L1': 'Linea1', ...}
 ```
+
+**Verificado contra el broker real** (Coreflux Hub, panel en `:8080`,
+conectándose directo al broker y suscribiendo a `#`): 79 = 3 líneas ×
+(9 KPI + 4 Maintance + 9 ERP) + planta completa (9 KPI + 4 Maintance, sin
+ERP propio). Si vuelves a auditar el broker y algo no calza contra esta
+cuenta, algo cambió en Coreflux — no asumas que el YAML sigue vigente sin
+volver a comprobarlo.
 
 Mapeo: `Linea1 ↔ L1 (350 ml)` · `Linea2 ↔ L2 (1.5 L)` · `Linea3 ↔ L3 (garrafón)`
 
 ## Qué escucha y qué publica el middleware
 
 **Suscribe:**
-- `FEMSA/+/MES/KPI/#` → `Availability, Quality, Performance, OEE, TEEP, DT, MTTR, MTBF`
+- `FEMSA/+/MES/KPI/#` → `Availability, Quality, Performance, OEE, TEEP, DT, MTTR, MTBF, MLT`
   Payload: número plano (`0.7712`) o JSON `{"value": 0.7712}` → tabla `kpi_uns`
 - `FEMSA/+/MES/Maintance/#` → estado de mantenimiento
+- `FEMSA/MES/KPI/#` y `FEMSA/MES/Maintance/#` → **agregado de planta completa**,
+  sin segmento de línea (existe en el broker real, verificado). Mismas hojas
+  que arriba; `interpretar_topico()` las etiqueta `linea='PLANTA'` — quedan en
+  la misma tabla `kpi_uns`, sin lógica ni vista aparte
 - `FEMSA/+/Process/#` → conteo de producción. La rama está **libre** en el YAML;
   por convención se leen las hojas `GoodCount / Count / Produccion / Production /
   value` como unidades buenas
 - `plant/+/production` → contrato legado v1 (compatibilidad)
+
+**Ruido del broker que NO es UNS FEMSA** (visto suscribiendo a `#` en
+Coreflux): `celda/status/nodered` (liveness del bridge Node-RED, aún sin
+integrar al UNS) y `Agent/*` (telemetría interna de Coreflux Hub con IA) —
+ignóralos, no forman parte de este contrato.
 
 **Publica (retained)** la rama ERP de cada línea, para que cualquier suscriptor
 nuevo (Ignition, Tecnomatix, Grafana) reciba el último estado al conectarse:
@@ -52,9 +69,12 @@ FEMSA/Linea1/ERP/ReservedQuantity   7500    (faltante)
 FEMSA/Linea1/ERP/ScheduleStart|ScheduleEnd|ActualStart|ActualEnd
 ```
 
-**Ciclo de cumplimiento:** cada `GoodCount` descuenta la PO abierta de esa línea
-(FIFO) → al completarse, se **valida la recepción en Odoo** (`stock.picking →
-button_validate`) → se republica la rama ERP con `COMPLETED`.
+**Ciclo de cumplimiento (actualizado, ver decisión #7 de `CLAUDE.md`):** cada
+`GoodCount` descuenta la PO abierta de esa línea (FIFO) → al completarse, se
+**valida la orden de fabricación vinculada** (`mrp.production →
+button_mark_done`, no ya la recepción de la PO — esa se recibe de inmediato
+al crearse, desde la página *Órdenes Odoo*) → Odoo descuenta la BOM y da
+entrada al terminado → se republica la rama ERP con `CLOSED`.
 
 ## Reglas de red (causa #1 de "no conecta")
 
@@ -64,7 +84,8 @@ button_validate`) → se republica la rama ERP con `COMPLETED`.
 - Herramientas externas (Tecnomatix, RoboDK, UAExpert) → siempre IP LAN.
 - **OPC UA**: el sufijo `/discovery` solo soporta FindServers/GetEndpoints, **no**
   CreateSession. La conexión de producción apunta directo al endpoint
-  (`opc.tcp://host:62541`, sin sufijo).
+  (`opc.tcp://host:62451` — ver `OPCUA_ENDPOINT` en `config/settings.py`,
+  sin sufijo `/discovery`).
 - **Certificados OPC UA**: la confianza es **bidireccional** — cliente y servidor
   deben confiar mutuamente.
 

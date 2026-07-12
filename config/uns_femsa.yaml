@@ -19,6 +19,7 @@ _templates:
     DT:
     MTTR:
     MTBF:
+    MLT:        # Mean Lead Time -- confirmado contra el broker real (Coreflux)
   maintance: &maintance
     MachineID:
     LastMaintance:
@@ -44,9 +45,13 @@ _templates:
     Process: {}   # aun sin hojas definidas
 # ---------------------------------------------------------------------
 # Jerarquia real del UNS. Agregar una linea nueva = una sola fila :)
+# `FEMSA/MES/...` (sin linea) es el agregado de PLANTA COMPLETA que ya
+# publica el broker real -- mismas hojas que `mes`, sin ERP/Process (no se
+# ha visto esa rama a nivel planta). Ver integrations/uns.py: linea="PLANTA".
 # ---------------------------------------------------------------------
 uns:
   FEMSA:
     Linea1: *linea
     Linea2: *linea
     Linea3: *linea
+    MES: *mes

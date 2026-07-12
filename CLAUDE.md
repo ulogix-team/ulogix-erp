@@ -54,7 +54,7 @@ nombres de servicio.
 | `core/finanzas_negocio.py` | **Motor financiero demand-driven**; `CAPEX_FILAS`/`TRM`/`TMAR`/... son el **default/fallback** — la fuente viva es la hoja `Parametros`/`CAPEX` de Sheets |
 | `core/sensibilidad.py` | Tornado paramétrico |
 | `core/rrhh.py` | Dotación/costo del roster de empleados (puro; reconcilia contra la hoja `Personal`) |
-| `integrations/uns.py` | Interpreta `config/uns_femsa.yaml` (63 tópicos) |
+| `integrations/uns.py` | Interpreta `config/uns_femsa.yaml` (79 tópicos, incl. agregado de planta `linea='PLANTA'`) |
 | `integrations/mqtt_middleware.py` | Suscribe UNS, cumple POs, publica rama ERP retained |
 | `integrations/odoo_client.py` | XML-RPC; `LineaPedido(nombre, default_code, cantidad, precio_unitario)`; compras+fabricación+**ventas+facturación** (cliente y proveedor), todo idempotente por referencia |
 | `integrations/sheets_client.py` | gspread + **fallback a Excel local** |
@@ -191,6 +191,20 @@ nombres de servicio.
     estándar en las 10 páginas para agrupación visual — úsalo en páginas
     nuevas. Cambio puramente visual/CSS: ningún cálculo, integración ni dato
     se tocó.
+13. **UNS: 79 tópicos, incluye agregado de planta completa (`linea='PLANTA'`).**
+    Verificado conectándose directo al broker real (Coreflux Hub, panel de
+    administración en `:8080` de la IP del broker, accesible por Tailscale) y
+    suscribiendo a `#`: además de los 9 KPI (incluye `MLT`, antes faltante) +
+    4 mantenimiento + 9 ERP por línea, el broker publica **el mismo bloque
+    KPI/Maintance a nivel de planta completa, sin segmento de línea**
+    (`FEMSA/MES/KPI/...`) — antes invisible para nosotros (ni la suscripción
+    ni `interpretar_topico()` lo reconocían). `integrations/uns.py` ahora se
+    suscribe también a `FEMSA/MES/KPI/#`/`FEMSA/MES/Maintance/#` y las
+    etiqueta `linea='PLANTA'`: caen en la misma tabla `kpi_uns` y el mismo
+    tablero (páginas *Producción MQTT* y *Base de Datos*), sin vista aparte.
+    El broker también trae `celda/status/nodered` (liveness del bridge
+    Node-RED, aún sin integrar) y `Agent/*` (telemetría interna de Coreflux
+    con IA, irrelevante) — no forman parte del UNS FEMSA, ignorarlos.
 
 ## Estado actual (validado)
 

@@ -52,12 +52,13 @@ if kpis:
            .pivot_table(index="linea", columns="kpi", values="valor_num",
                         aggfunc="last").round(4))
     orden = [c for c in ["OEE", "Availability", "Performance", "Quality",
-                         "TEEP", "DT", "MTTR", "MTBF"] if c in piv.columns]
+                         "TEEP", "DT", "MTTR", "MTBF", "MLT"] if c in piv.columns]
     st.dataframe(piv[orden + [c for c in piv.columns if c not in orden]],
                  width="stretch")
-    st.caption("Fuente: topicos `FEMSA/+/MES/KPI/#` ingeridos por el middleware "
-               "(tabla kpi_uns). El detalle historico esta en el navegador de "
-               "arriba.")
+    st.caption("Fuente: topicos `FEMSA/+/MES/KPI/#` (por linea) y `FEMSA/MES/KPI/#` "
+               "(fila `PLANTA`, agregado de toda la planta) ingeridos por el "
+               "middleware (tabla kpi_uns). El detalle historico esta en el "
+               "navegador de arriba.")
 else:
     st.info("Aun no llegan KPIs del UNS. Corre el middleware y el simulador: "
             "`python middleware/run_middleware.py` + "

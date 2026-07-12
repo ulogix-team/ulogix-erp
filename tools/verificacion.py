@@ -157,13 +157,18 @@ def _cont():
     return f"{n} asientos -> {destino}"
 
 
-@paso("11. UNS FEMSA (YAML -> 63 topicos + interprete)")
+@paso("11. UNS FEMSA (YAML -> 79 topicos + interprete + agregado de planta)")
 def _uns():
     from integrations import uns
     hs = uns.hojas()
-    assert len(hs) == 63 and "FEMSA/Linea1/MES/KPI/OEE" in hs
+    # 3 lineas x (9 KPI [+MLT] + 4 Maintance + 9 ERP) + planta (9 KPI + 4 Maintance)
+    # = 3*22 + 13 = 79 -- verificado contra el broker real (Coreflux)
+    assert len(hs) == 79 and "FEMSA/Linea1/MES/KPI/OEE" in hs
+    assert "FEMSA/MES/KPI/MLT" in hs
     info = uns.interpretar_topico("FEMSA/Linea2/ERP/OrderStatus")
     assert info["linea"] == "L2" and info["hoja"] == "OrderStatus"
+    planta = uns.interpretar_topico("FEMSA/MES/KPI/OEE")
+    assert planta["linea"] == "PLANTA" and planta["hoja"] == "OEE"
     return f"{len(hs)} topicos-hoja; suscripciones: {uns.suscripciones()}"
 
 

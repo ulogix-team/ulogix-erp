@@ -12,10 +12,19 @@ Reglas (mismas del YAML):
 Topicos resultantes (ejemplos):
   FEMSA/Linea1/MES/KPI/OEE          FEMSA/Linea2/ERP/OrderStatus
   FEMSA/Linea3/MES/Maintance/MTTR   FEMSA/Linea1/Process/GoodCount
+  FEMSA/MES/KPI/OEE                 (agregado de PLANTA COMPLETA, sin linea)
 
 La suite actua como el ERP del UNS: PUBLICA la rama ERP (retained, para que
 cualquier consumidor nuevo reciba el ultimo estado) y SE SUSCRIBE a MES y
 Process. Mapeo de lineas: Linea1<->L1, Linea2<->L2, Linea3<->L3.
+
+`FEMSA/MES/...` (sin segmento de linea) es un agregado de PLANTA COMPLETA
+que el broker real (Coreflux) tambien publica -- verificado conectandose
+directo al broker y suscribiendo a `#`. `interpretar_topico()` lo reconoce
+como `linea='PLANTA'` (sentinela, no esta en `LINEA_DE_UNS`) para que quede
+en la misma tabla `kpi_uns` y los mismos tableros que las lineas reales, sin
+duplicar codigo. No tiene rama ERP ni Process propia (no se ha visto esa
+combinacion en el broker).
 """
 from __future__ import annotations
 
@@ -62,21 +71,31 @@ def hojas(arbol: dict | None = None, prefijo: str = "") -> list[str]:
 
 
 def suscripciones() -> list[str]:
-    """Lo que consume el middleware (MES + Process de todas las lineas)."""
+    """Lo que consume el middleware (MES + Process de todas las lineas, mas
+    el agregado MES de planta completa -- 'FEMSA/MES/...', sin comodin de
+    linea porque esa posicion es literalmente 'MES')."""
     r = raiz()
-    return [f"{r}/+/MES/KPI/#", f"{r}/+/MES/Maintance/#", f"{r}/+/Process/#"]
+    return [f"{r}/+/MES/KPI/#", f"{r}/+/MES/Maintance/#", f"{r}/+/Process/#",
+            f"{r}/MES/KPI/#", f"{r}/MES/Maintance/#"]
 
 
 def interpretar_topico(topic: str) -> dict | None:
-    """FEMSA/Linea1/MES/KPI/OEE -> {'linea':'L1','rama':'MES/KPI','hoja':'OEE'}"""
+    """FEMSA/Linea1/MES/KPI/OEE -> {'linea':'L1','rama':'MES/KPI','hoja':'OEE'}
+    FEMSA/MES/KPI/OEE          -> {'linea':'PLANTA','rama':'MES/KPI','hoja':'OEE'}
+    (agregado de planta completa, sin segmento de linea -- ver docstring del modulo)"""
     partes = topic.split("/")
     if len(partes) < 4 or partes[0] != raiz():
         return None
-    linea = LINEA_DE_UNS.get(partes[1])
-    if linea is None:
+    if partes[1] in LINEA_DE_UNS:
+        linea, linea_uns, resto = LINEA_DE_UNS[partes[1]], partes[1], partes[2:]
+    elif partes[1] == "MES":
+        linea, linea_uns, resto = "PLANTA", raiz(), partes[1:]
+    else:
         return None
-    return {"linea": linea, "linea_uns": partes[1],
-            "rama": "/".join(partes[2:-1]), "hoja": partes[-1], "topic": topic}
+    if len(resto) < 2:
+        return None
+    return {"linea": linea, "linea_uns": linea_uns,
+            "rama": "/".join(resto[:-1]), "hoja": resto[-1], "topic": topic}
 
 
 def valor_payload(raw: bytes | str):
