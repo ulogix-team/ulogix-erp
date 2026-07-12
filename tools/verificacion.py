@@ -35,7 +35,7 @@ def paso(nombre):
 def _datos():
     from config import settings
     req = ["kof_volumenes_trimestrales.csv", "maestro_productos.csv", "bom.csv",
-           "estacionalidad_mensual.csv", "parametros_planta.json"]
+           "estacionalidad_mensual.csv", "parametros_planta.json", "clientes.csv"]
     faltan = [f for f in req if not (settings.DATA_DIR / f).exists()]
     assert not faltan, f"faltan: {faltan}"
     return f"{len(req)} archivos"
@@ -84,7 +84,7 @@ def _sens():
     return f"margen base ${t.attrs['margen_base_cop']:,.0f}"
 
 
-@paso("7. Odoo dry-run (PO de insumos + MO desde el plan)")
+@paso("7. Odoo dry-run (PO de insumos + factura proveedor + MO desde el plan)")
 def _odoo():
     # QA de LOGICA, no de conectividad (eso vive en la pagina Pruebas):
     # se fuerza dry-run aunque haya credenciales reales en .env.
@@ -97,16 +97,38 @@ def _odoo():
     res = cli.crear_orden_compra(
         g["proveedor"], [LineaPedido(g["descripcion"], g["componente"],
                                      g["cantidad"], g["precio_unitario_cop"])],
-        "QA/VERIFICACION", confirmar=True, recibir=True)
+        "QA/VERIFICACION", confirmar=True, recibir=True, facturar=True)
+    assert res.get("facturada")
     mo = cli.crear_orden_fabricacion(g["producto"], 100, "QA/VERIFICACION-MO")
     state_store.registrar_po(res["name"], g["producto"], qty_objetivo=100,
                              proveedor=g["proveedor"], mo_id=mo.get("id"),
                              mo_name=mo.get("name"), insumos_recibidos=True)
+    globals()["_ultima_po"] = res
     settings.DRY_RUN_FORZADO = previo
-    return f"{res['name']} -> {mo['name']}"
+    return f"{res['name']} (facturada) -> {mo['name']}"
 
 
-@paso("8. Middleware MQTT (payload normal + estilo MES)")
+@paso("8. Ventas dry-run (SO al cliente + entrega + factura de cliente)")
+def _ventas():
+    from config import settings
+    from integrations.odoo_client import LineaPedido, OdooClient
+    from integrations import state_store
+    previo, settings.DRY_RUN_FORZADO = settings.DRY_RUN_FORZADO, True
+    g = globals()["_plan"].iloc[0]
+    cli = OdooClient()
+    res = cli.crear_orden_venta(
+        "QA Distribuidor de prueba",
+        [LineaPedido(g["descripcion"], g["producto"], 50, 2200.0)],
+        "QA/VERIFICACION-VENTA", confirmar=True, entregar=True, facturar=True)
+    assert res.get("entregada") and res.get("facturada")
+    state_store.registrar_venta(res["name"], g["producto"], "QA Distribuidor de prueba",
+                                50, 2200.0, mo_name="QA/VERIFICACION-MO",
+                                estado="facturada")
+    settings.DRY_RUN_FORZADO = previo
+    return f"{res['name']} -> entregada y facturada"
+
+
+@paso("9. Middleware MQTT (payload normal + estilo MES)")
 def _mw():
     import json
     from integrations.mqtt_middleware import Middleware
@@ -124,7 +146,7 @@ def _mw():
     return f"{pos[0]['po_name']} -> recibida_odoo (MO {pos[0]['mo_name']})"
 
 
-@paso("9. Contabilidad (Sheets con fallback Excel)")
+@paso("10. Contabilidad (Sheets con fallback Excel)")
 def _cont():
     from integrations.sheets_client import Contabilidad
     from integrations import state_store
@@ -135,7 +157,7 @@ def _cont():
     return f"{n} asientos -> {destino}"
 
 
-@paso("10. UNS FEMSA (YAML -> 63 topicos + interprete)")
+@paso("11. UNS FEMSA (YAML -> 63 topicos + interprete)")
 def _uns():
     from integrations import uns
     hs = uns.hojas()
@@ -145,7 +167,7 @@ def _uns():
     return f"{len(hs)} topicos-hoja; suscripciones: {uns.suscripciones()}"
 
 
-@paso("11. Base de datos ERP (tablas + persistencia)")
+@paso("12. Base de datos ERP (tablas + persistencia)")
 def _erp():
     from integrations import state_store as ss
     res = ss.resumen_tablas()
@@ -155,7 +177,7 @@ def _erp():
     return f"tablas: {res}"
 
 
-@paso("12. Tiempos y OEE (+5% justificado)")
+@paso("13. Tiempos y OEE (+5% justificado)")
 def _toee():
     from core.tiempos_oee import tabla_oee, tabla_tiempos
     t, o = tabla_tiempos(), tabla_oee()
@@ -167,7 +189,7 @@ def _toee():
             f"{o['oee_base'].tolist()} · TEEP {o['teep'].tolist()}")
 
 
-@paso("13. Caso de negocio (ROI/VPN/TIR)")
+@paso("14. Caso de negocio (ROI/VPN/TIR)")
 def _fin():
     from core.finanzas_negocio import indicadores
     ind = indicadores()
@@ -178,8 +200,8 @@ def _fin():
 
 
 if __name__ == "__main__":
-    for fn in [_datos, _forecast, _esc, _inv, _mrp, _sens, _odoo, _mw, _cont,
-               _uns, _erp, _toee, _fin]:
+    for fn in [_datos, _forecast, _esc, _inv, _mrp, _sens, _odoo, _ventas, _mw,
+               _cont, _uns, _erp, _toee, _fin]:
         fn()
     print("\n=== VERIFICACION ULOGIX ===")
     ok = True

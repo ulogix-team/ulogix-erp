@@ -28,7 +28,7 @@ de `core/finanzas_negocio.py` y las tablas de `core/tiempos_oee.py` de este repo
                               MIDDLEWARE Ulogix ────► Odoo API (XML-RPC)
                                 │      ▲ publica retained FEMSA/…/ERP/#
                                 ▼      │
-                           SQLite ERP (7 tablas)
+                           SQLite ERP (8 tablas)
                                 │
                                 ▼
               DASHBOARD Streamlit ◄──► Google Sheets (libro en Drive)
@@ -43,7 +43,7 @@ nombres de servicio.
 
 | Ruta | Contenido |
 |---|---|
-| `app/Inicio.py` + `app/pages/1..8` | Dashboard Streamlit (8 páginas) |
+| `app/Inicio.py` + `app/pages/1..9` | Dashboard Streamlit (9 páginas) |
 | `app/ui/theme.py` | Tema, helpers (`datos_pronostico()`, `demanda_activa()`, `plotly_layout()`), supresión de warnings |
 | `core/forecast.py` | Holt-Winters amortiguado + Bates-Granger óptimo + Monte Carlo |
 | `core/escenarios.py` | 6 presets + escenario personalizado (elasticidades **por producto**) |
@@ -53,10 +53,10 @@ nombres de servicio.
 | `core/sensibilidad.py` | Tornado paramétrico |
 | `integrations/uns.py` | Interpreta `config/uns_femsa.yaml` (63 tópicos) |
 | `integrations/mqtt_middleware.py` | Suscribe UNS, cumple POs, publica rama ERP retained |
-| `integrations/odoo_client.py` | XML-RPC; `LineaPedido(nombre, default_code, cantidad, precio_unitario)` |
+| `integrations/odoo_client.py` | XML-RPC; `LineaPedido(nombre, default_code, cantidad, precio_unitario)`; compras+fabricación+**ventas+facturación** (cliente y proveedor), todo idempotente por referencia |
 | `integrations/sheets_client.py` | gspread + **fallback a Excel local** |
-| `integrations/state_store.py` | SQLite WAL, 7 tablas ERP |
-| `tools/verificacion.py` | **QA de 13 pasos — correr siempre antes de dar algo por bueno** |
+| `integrations/state_store.py` | SQLite WAL, 8 tablas ERP |
+| `tools/verificacion.py` | **QA de 14 pasos — correr siempre antes de dar algo por bueno** |
 | `tools/bootstrap_odoo.py` | Puebla Odoo desde cero (idempotente) |
 | `tools/simulador_produccion.py` | Publica KPIs y GoodCount al UNS |
 
@@ -89,6 +89,23 @@ nombres de servicio.
    producción real reportada por MQTT cubre la cantidad objetivo del lote;
    ahí Odoo descuenta la BOM y da entrada al producto terminado. El vínculo
    PO↔MO vive en `state_store.po_tracking` (`mo_id`/`mo_name`).
+8. **Idempotencia por referencia.** `crear_orden_compra`, `crear_orden_fabricacion`
+   y `crear_orden_venta` buscan primero una orden **no cancelada** con la misma
+   referencia (`origin` en PO/MO, `client_order_ref` en SO —
+   `OdooClient._buscar_orden_existente`) antes de crear otra. Evita duplicados
+   si el usuario reintenta o hace doble clic en el dashboard — nos pasó de
+   verdad probando contra Odoo real (~21 POs duplicadas en una sesión). No
+   quitar esta búsqueda previa aunque parezca redundante.
+9. **Ventas y cuentas por pagar/cobrar.** El flujo completo del ERP es
+   compra-insumo → fabricación → **venta → factura → cobro**. Cuando una MO
+   queda `recibida_odoo` (producto terminado disponible), la página *Ventas y
+   Facturación* la reparte entre los clientes de `data/clientes.csv` (según
+   `participacion`) y crea una `sale.order` por cliente: confirma, entrega
+   (`stock.picking` de salida) y factura (`account.move` `out_invoice`). Del
+   lado de compras, `crear_orden_compra(facturar=True)` genera además la
+   factura de **proveedor** (`account.move` `in_invoice`) sobre la PO ya
+   recibida — la cuenta por pagar, no solo el movimiento de inventario. El
+   vínculo lote↔ventas vive en `state_store.venta_tracking` (`mo_name`).
 
 ## Estado actual (validado)
 
@@ -100,7 +117,7 @@ nombres de servicio.
   (12 m operativos) · **VPN $8.033 M · TIR 36.6 % E.A. · ROI 103.8 % · payback
   33/42 m**.
 - Libro Excel: 23 hojas, 3.741 fórmulas, **0 errores** tras recalcular.
-- `tools/verificacion.py`: **13/13 en verde**.
+- `tools/verificacion.py`: **14/14 en verde**.
 
 ## Comandos
 
@@ -109,7 +126,7 @@ nombres de servicio.
 docker compose -f docker-compose.dashboard.yml up -d --build
 docker compose -f docker-compose.dashboard.yml logs -f dashboard
 
-# QA completo (13 pasos) — obligatorio antes de cerrar cualquier cambio
+# QA completo (14 pasos) — obligatorio antes de cerrar cualquier cambio
 python tools/verificacion.py
 
 # Poblar Odoo desde cero
@@ -158,3 +175,6 @@ Estas credenciales son de desarrollo y se rotarán.
   OPC UA write).
 - Cerrar la tensión TEEP/utilización con horas programadas reales de la planta.
 - Resolver GRP001 con el taller antes de emitir la RFQ.
+- Costeo/valoración de inventario, checkpoints de calidad, reposición
+  automática de clientes y registro de cobro (`account.payment`) contra la
+  factura de cliente — el flujo venta→factura ya existe, falta el cobro.

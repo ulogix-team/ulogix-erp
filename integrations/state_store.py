@@ -12,6 +12,11 @@ Tablas:
                        la BOM. El middleware acumula produccion real y marca
                        'cumplida' / 'recibida_odoo' (esta ultima significa: la
                        orden de fabricacion quedo validada en Odoo).
+- venta_tracking     : ordenes de venta (sale.order) de producto terminado a
+                       un cliente/distribuidor (ver data/clientes.csv),
+                       vinculadas al lote de fabricacion vendido (mo_name).
+                       La pagina *Ventas y Facturacion* la llena al crear cada
+                       SO; estado refleja creada/entregada/facturada/error.
 - log_acciones       : auditoria (creaciones en Odoo, dry-runs, errores).
 """
 from __future__ import annotations
@@ -46,6 +51,18 @@ CREATE TABLE IF NOT EXISTS po_tracking (
     detalle TEXT,
     mo_id INTEGER, mo_name TEXT,             -- mrp.production vinculada (BOM del sku)
     insumos_recibidos INTEGER NOT NULL DEFAULT 0  -- PO de insumos ya recibida en Odoo
+);
+CREATE TABLE IF NOT EXISTS venta_tracking (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    so_name TEXT UNIQUE NOT NULL,
+    odoo_id INTEGER,
+    sku TEXT NOT NULL, cliente TEXT,
+    mo_name TEXT,                              -- lote de fabricacion vendido
+    cantidad REAL NOT NULL,
+    precio_unitario_cop REAL, subtotal_cop REAL,
+    estado TEXT NOT NULL DEFAULT 'creada',     -- creada|entregada|facturada|error
+    creado_ts TEXT NOT NULL, actualizado_ts TEXT NOT NULL,
+    detalle TEXT
 );
 CREATE TABLE IF NOT EXISTS log_acciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,6 +193,31 @@ def acumular_produccion(sku: str, qty: float, linea: str = "") -> list[dict]:
     return completadas
 
 
+def registrar_venta(so_name: str, sku: str, cliente: str, cantidad: float,
+                    precio_unitario_cop: float = 0.0, mo_name: str = "",
+                    odoo_id: int | None = None, estado: str = "creada",
+                    detalle: str = "") -> None:
+    with conexion() as con:
+        con.execute(
+            "INSERT INTO venta_tracking (so_name, odoo_id, sku, cliente, mo_name,"
+            " cantidad, precio_unitario_cop, subtotal_cop, estado, creado_ts,"
+            " actualizado_ts, detalle) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(so_name) DO UPDATE SET odoo_id=excluded.odoo_id,"
+            " estado=excluded.estado, actualizado_ts=excluded.actualizado_ts,"
+            " detalle=excluded.detalle",
+            (so_name, odoo_id, sku, cliente, mo_name, cantidad,
+             precio_unitario_cop, cantidad * precio_unitario_cop, estado,
+             _ahora(), _ahora(), detalle))
+    log("erp", "registrar_venta", f"{so_name} | {cliente} | {sku} x {cantidad:g}")
+
+
+def listar_ventas(limit: int = 200) -> list[dict]:
+    with conexion() as con:
+        rows = con.execute("SELECT * FROM venta_tracking ORDER BY id DESC LIMIT ?",
+                           (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def marcar_po(po_name: str, estado: str, detalle: str = "") -> None:
     with conexion() as con:
         con.execute("UPDATE po_tracking SET estado=?, detalle=?, actualizado_ts=? "
@@ -301,7 +343,8 @@ def kpis_actuales() -> list[dict]:
 
 
 TABLAS_ERP = ["pronosticos", "plan_compras", "inventario_politicas",
-              "po_tracking", "eventos_produccion", "kpi_uns", "log_acciones"]
+              "po_tracking", "venta_tracking", "eventos_produccion",
+              "kpi_uns", "log_acciones"]
 
 
 def leer_tabla(nombre: str, limit: int = 500) -> list[dict]:

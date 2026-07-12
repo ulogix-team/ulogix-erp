@@ -51,17 +51,20 @@ st.caption(f"{len(grupos)} ordenes propuestas · escenario **{nombre_esc}** · "
 
 sel_refs = st.multiselect("Ordenes a crear", grupos["referencia"].tolist(),
                           default=grupos["referencia"].tolist())
-avanzar = st.toggle("Confirmar y recibir insumos de inmediato + reservar en la MO",
+avanzar = st.toggle("Confirmar y recibir insumos de inmediato + reservar en la MO "
+                    "+ factura de proveedor",
                     value=True,
                     help="Recomendado: confirma cada purchase.order y valida su "
                          "recepcion en el mismo paso (la suite no modela el lead "
-                         "time real del proveedor), y confirma + reserva la orden "
-                         "de fabricacion (mrp.production) contra ese stock. Si lo "
-                         "apagas, PO y MO quedan en borrador para gestionar a mano "
-                         "desde Odoo.")
+                         "time real del proveedor), genera y contabiliza la "
+                         "factura de proveedor (cuenta por pagar) sobre esa PO, y "
+                         "confirma + reserva la orden de fabricacion "
+                         "(mrp.production) contra ese stock. Si lo apagas, PO y MO "
+                         "quedan en borrador para gestionar a mano desde Odoo.")
 
 if st.button("🛒 Crear ordenes en Odoo", type="primary", disabled=not sel_refs):
     creadas = []
+    avisos = []
     ordenes_fabricacion: dict[tuple[str, str], dict] = {}  # (producto, mes) -> MO
     barra = st.progress(0.0)
     sel = grupos[grupos["referencia"].isin(sel_refs)]
@@ -77,7 +80,14 @@ if st.button("🛒 Crear ordenes en Odoo", type="primary", disabled=not sel_refs
                   for l in lineas_df.itertuples()]
         res = odoo.crear_orden_compra(g.proveedor, lineas, g.referencia,
                                       fecha_planeada=str(g.fecha_pedido),
-                                      confirmar=avanzar, recibir=avanzar)
+                                      confirmar=avanzar, recibir=avanzar,
+                                      facturar=avanzar)
+        if avanzar and not res.get("recibida"):
+            avisos.append(f"⚠️ {res['name']}: la recepcion de insumos no se pudo "
+                          "validar (ver Auditoria abajo para el detalle).")
+        if avanzar and not res.get("facturada"):
+            avisos.append(f"⚠️ {res['name']}: la factura de proveedor no se pudo "
+                          "generar (ver Auditoria abajo para el detalle).")
 
         # una sola orden de fabricacion por (producto, mes): la comparten las
         # POs de distintos proveedores que abastecen el mismo lote
@@ -103,10 +113,14 @@ if st.button("🛒 Crear ordenes en Odoo", type="primary", disabled=not sel_refs
                f"{'creadas en Odoo' if not odoo.dry_run else 'registradas (dry-run)'} "
                f"y {len(ordenes_fabricacion)} orden(es) de fabricacion: "
                + ", ".join(creadas))
+    for a in avisos:
+        st.warning(a)
     st.caption("El middleware validara **cumplida → recibida_odoo** la orden de "
                "fabricacion vinculada cuando la produccion reportada por MQTT "
                "cubra la cantidad objetivo del lote (descuenta la BOM y da "
-               "entrada al producto terminado).")
+               "entrada al producto terminado). Cuando ese lote quede listo, "
+               "aparece en la pagina *Ventas y Facturacion* para venderlo a un "
+               "cliente.")
 
 st.divider()
 
