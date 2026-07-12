@@ -34,9 +34,10 @@ de `core/finanzas_negocio.py` y las tablas de `core/tiempos_oee.py` de este repo
               DASHBOARD Streamlit ◄──► Google Sheets (libro en Drive)
 ```
 
-**Regla de red:** fuera de Docker se usa la **IP LAN del host** (broker MQTT
-`100.123.104.31:1883`), nunca `localhost` ni hostnames de servicios Docker.
-Dentro de docker-compose sí resuelven los nombres de servicio.
+**Regla de red:** fuera de Docker se usa la **IP LAN del host** (broker MQTT,
+puerto `1883` — ver `MQTT_HOST` en `.env`, no versionado), nunca `localhost`
+ni hostnames de servicios Docker. Dentro de docker-compose sí resuelven los
+nombres de servicio.
 
 ## Estructura
 
@@ -125,15 +126,15 @@ python tools/generar_modelo.py
 # recalcular con LibreOffice hasta 0 errores antes de subir a Drive
 ```
 
-## Credenciales (`.env`, ya configuradas)
+## Credenciales (`.env`, ya configuradas — NO versionado)
 
-`ODOO_URL=https://ulogix-admin.odoo.com` · `ODOO_DB=ulogix-admin` ·
-`ODOO_USER=ulogixteam@gmail.com` · `ODOO_API_KEY` · `MQTT_HOST=100.123.104.31` ·
-`GOOGLE_SA_JSON=config/google_service_account.json` (cuenta:
-`ulogix-sheets-admin@ulogix-femsa.iam.gserviceaccount.com`) ·
-`SHEETS_SPREADSHEET_ID`.
+Variables: `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY`, `MQTT_HOST`,
+`GOOGLE_SA_JSON` (ruta al JSON de la cuenta de servicio, `config/`, no
+versionado), `SHEETS_SPREADSHEET_ID`. Ver `.env.example` para el formato;
+los valores reales viven solo en `.env` local de cada desarrollador.
 
-**Nunca** commitear `.env` ni `config/google_service_account.json`.
+**Nunca** commitear `.env` ni `config/google_service_account.json`, ni pegar
+sus valores (URLs, correos, IPs, IDs) en archivos versionados como este.
 Estas credenciales son de desarrollo y se rotarán.
 
 ## Convenciones de código
