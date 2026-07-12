@@ -53,7 +53,7 @@ df_esc = aplicar_escenario(res, esc)
 
 # ------------------------------------------------------------------ comparacion vs base
 st.divider()
-st.subheader("Escenario vs. base")
+st.subheader("🎯 Escenario vs. base")
 sku = st.radio("Producto", list(COLOR_SKU), horizontal=True,
                format_func=lambda s: NOMBRE_CORTO[s], label_visibility="collapsed")
 x = df_esc["etiqueta"]
@@ -66,13 +66,14 @@ fig.add_trace(go.Scatter(x=x, y=df_esc[f"{sku}_unidades"], name=esc.nombre,
 st.plotly_chart(theme.plotly_layout(fig), width="stretch")
 
 delta = df_esc[f"{sku}_unidades"].sum() / max(res.mensual[f"{sku}_unidades"].sum(), 1) - 1
-c1, c2 = st.columns(2)
-c1.metric("Total anual del escenario", f"{int(df_esc[f'{sku}_unidades'].sum()):,} un",
-          f"{delta*100:+.2f}% vs base")
-c2.metric("Mes de mayor efecto",
-          df_esc.loc[(df_esc[f"{sku}_factor"] - 1).abs().idxmax(), "etiqueta"],
-          f"factor {df_esc[f'{sku}_factor'].loc[(df_esc[f'{sku}_factor']-1).abs().idxmax()]:.2f}",
-          delta_color="off")
+with st.container(border=True):
+    c1, c2 = st.columns(2)
+    c1.metric("Total anual del escenario", f"{int(df_esc[f'{sku}_unidades'].sum()):,} un",
+              f"{delta*100:+.2f}% vs base")
+    c2.metric("Mes de mayor efecto",
+              df_esc.loc[(df_esc[f"{sku}_factor"] - 1).abs().idxmax(), "etiqueta"],
+              f"factor {df_esc[f'{sku}_factor'].loc[(df_esc[f'{sku}_factor']-1).abs().idxmax()]:.2f}",
+              delta_color="off")
 
 # ------------------------------------------------------------------ activar
 st.divider()
@@ -99,7 +100,7 @@ theme.banner_escenario()
 
 # ------------------------------------------------------------------ resumen 6 escenarios
 st.divider()
-st.subheader("Resumen comparativo (equivale al script 13)")
+st.subheader("📋 Resumen comparativo (equivale al script 13)")
 
 
 @st.cache_data(show_spinner=False)

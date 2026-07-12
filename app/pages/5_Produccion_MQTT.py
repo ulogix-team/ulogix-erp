@@ -29,32 +29,34 @@ st.caption("El middleware corre como proceso aparte: `python middleware/run_midd
 
 def _vista():
     acum = state_store.produccion_acumulada()
-    cols = st.columns(3)
-    mapa = {a["sku"]: a for a in acum}
-    for col, sku in zip(cols, COLOR_SKU):
-        a = mapa.get(sku)
-        with col:
-            if a:
-                st.metric(NOMBRE_CORTO[sku], f"{a['qty_total']:,.0f} un",
-                          f"{a['eventos']} reportes · ultimo {a['ultimo'][11:19]} UTC",
-                          delta_color="off")
-            else:
-                st.metric(NOMBRE_CORTO[sku], "—", "sin reportes aun", delta_color="off")
+    with st.container(border=True):
+        cols = st.columns(3)
+        mapa = {a["sku"]: a for a in acum}
+        for col, sku in zip(cols, COLOR_SKU):
+            a = mapa.get(sku)
+            with col:
+                if a:
+                    st.metric(NOMBRE_CORTO[sku], f"{a['qty_total']:,.0f} un",
+                              f"{a['eventos']} reportes · ultimo {a['ultimo'][11:19]} UTC",
+                              delta_color="off")
+                else:
+                    st.metric(NOMBRE_CORTO[sku], "—", "sin reportes aun", delta_color="off")
 
-    st.subheader("Cumplimiento de ordenes de compra")
+    st.subheader("✅ Cumplimiento de ordenes de compra")
     pos = state_store.listar_pos(30)
     if not pos:
         st.info("No hay POs vinculadas todavia (crealas en *Ordenes Odoo*).")
     else:
         iconos = {"abierta": "🔵", "cumplida": "🟠", "recibida_odoo": "🟢", "error": "🔴"}
-        for p in pos:
-            avance = min(1.0, p["qty_producida"] / max(p["qty_objetivo"], 1e-9))
-            st.progress(avance, text=f"{iconos.get(p['estado'],'⚪')} {p['po_name']} · "
-                                     f"{p['sku']} · {p['qty_producida']:,.0f}/"
-                                     f"{p['qty_objetivo']:,.0f} un · `{p['estado']}` · "
-                                     f"MO `{p.get('mo_name') or '—'}`")
+        with st.container(border=True):
+            for p in pos:
+                avance = min(1.0, p["qty_producida"] / max(p["qty_objetivo"], 1e-9))
+                st.progress(avance, text=f"{iconos.get(p['estado'],'⚪')} {p['po_name']} · "
+                                         f"{p['sku']} · {p['qty_producida']:,.0f}/"
+                                         f"{p['qty_objetivo']:,.0f} un · `{p['estado']}` · "
+                                         f"MO `{p.get('mo_name') or '—'}`")
 
-    st.subheader("Ultimos reportes de produccion")
+    st.subheader("🕒 Ultimos reportes de produccion")
     ev = state_store.ultimos_eventos(25)
     if ev:
         st.dataframe(pd.DataFrame(ev)[["ts", "linea", "sku", "qty", "topic"]],
@@ -76,7 +78,7 @@ except Exception:  # noqa: BLE001 — fallback manual
 st.divider()
 
 # ------------------------------------------------------------------ publicador de prueba
-st.subheader("Publicar reporte de prueba (directo a tu broker)")
+st.subheader("📤 Publicar reporte de prueba (directo a tu broker)")
 c1, c2, c3 = st.columns(3)
 linea = c1.selectbox("Linea", ["L1", "L2", "L3"])
 sku_defecto = {"L1": "P1-CC350-RGB", "L2": "P2-QT1500-PET", "L3": "P3-GARR25L"}[linea]
@@ -143,7 +145,7 @@ FEMSA/Linea1/ERP/ReservedQuantity  7500       (faltante)
 Mapeo de lineas: `Linea1↔L1 (350 ml)`, `Linea2↔L2 (1.5 L)`, `Linea3↔L3 (garrafon)`.
 """)
 
-st.subheader("KPIs MES recibidos del UNS")
+st.subheader("📊 KPIs MES recibidos del UNS")
 kpis = state_store.kpis_actuales()
 if kpis:
     _piv = (pd.DataFrame(kpis)

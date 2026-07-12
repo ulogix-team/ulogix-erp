@@ -162,6 +162,35 @@ nombres de servicio.
     (`core.rrhh.reconciliar_con_personal`, sección 3 de la página *RRHH*). A
     diferencia de `Demanda`/`Inventarios`, `Empleados` no tiene fórmulas
     dependientes: se reemplaza completa (`clear`+`append`) sin problema.
+11. **Costos de ingeniería ULogix: APU (Análisis de Precios Unitarios), Sheets
+    manda igual que el resto de CAPEX.** Las 3 filas `Servicios` de la hoja
+    `CAPEX` (Ingeniería de detalle/FAT/SAT/PMO, Instalación/EPC, Capacitación/
+    gestión del cambio) ahora se justifican componente por componente en la
+    hoja nueva `APU_Ingenieria` (`tools/publicar_apu_ingenieria.py`,
+    `Contabilidad.leer_apu_ingenieria()`): costo directo (mano de obra propia
+    — costo real de `data/empleados.csv` — + subcontratistas/OEM + materiales
+    + logística) × (1 + AIU). **AIU es una referencia de mercado (25–30%),
+    NO una tarifa fijada por ley** — Colombia desreguló los honorarios de
+    ingeniería (COPNIA no fija tarifas mínimas desde hace años); no afirmar
+    lo contrario en código o docs. El AIU implícito resultante (27–28% en
+    los tres ítems) valida que los montos de `CAPEX` ya estaban bien
+    calibrados — **el precio total de cada ítem no cambió**, solo se
+    justificó de abajo hacia arriba. Es de **solo lectura/exhibición**: no
+    alimenta ningún cálculo de `core/finanzas_negocio.py` (los montos que sí
+    computan siguen siendo los de `CAPEX`). Se muestra en la página
+    *Finanzas*, sección "Costos de ingeniería ULogix — APU". Las 3 filas de
+    `CAPEX` quedaron anotadas con `(ver hoja APU_Ingenieria)` (solo texto en
+    la columna `activo / paquete`, no se tocaron cantidad/moneda/
+    costo_unitario/vida/categoría).
+12. **Identidad visual corporativa en `app/ui/theme.py`.** Paleta derivada
+    del logo (fondo `#070213`, acento violeta `#8F7BFF`), tokens en `COL`
+    (`base/panel/panel2/texto/texto2/acento/alerta/ok/borde/borde2/muted/
+    critico/acento2`) y `COLORWAY` para series genéricas — **los colores por
+    línea/SKU (`COLOR_SKU`) no cambiaron**, es la firma visual de la suite.
+    `st.container(border=True)` alrededor de grupos de métricas es el patrón
+    estándar en las 10 páginas para agrupación visual — úsalo en páginas
+    nuevas. Cambio puramente visual/CSS: ningún cálculo, integración ni dato
+    se tocó.
 
 ## Estado actual (validado)
 

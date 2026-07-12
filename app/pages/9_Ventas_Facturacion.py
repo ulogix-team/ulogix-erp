@@ -33,7 +33,7 @@ maestro = cargar_maestro().set_index("sku")
 clientes = pd.read_csv(settings.DATA_DIR / "clientes.csv")
 
 # ------------------------------------------------------------------ lotes vendibles
-st.subheader("1 · Lotes de producto terminado disponibles")
+st.subheader("1 · 📦 Lotes de producto terminado disponibles")
 
 pos = state_store.listar_pos()
 ventas = state_store.listar_ventas()
@@ -122,7 +122,7 @@ else:
 st.divider()
 
 # ------------------------------------------------------------------ seguimiento
-st.subheader("2 · Seguimiento de ventas")
+st.subheader("2 · 💰 Seguimiento de ventas")
 ventas = state_store.listar_ventas()
 if not ventas:
     st.info("Aun no hay ventas registradas. Crea ordenes de venta arriba.")

@@ -22,7 +22,7 @@ _sigma_prod = dict(zip(metricas["producto"], metricas["sigma_rel"]))
 _prod_sku = {"P1-CC350-RGB": "P1", "P2-QT1500-PET": "P2", "P3-GARR25L": "P3"}
 
 # ------------------------------------------------------------------ simulacion PT
-st.subheader("Simulacion de producto terminado")
+st.subheader("📦 Simulacion de producto terminado")
 sku = st.radio("Producto", list(COLOR_SKU), horizontal=True,
                format_func=lambda s: NOMBRE_CORTO[s], label_visibility="collapsed")
 
@@ -50,18 +50,19 @@ if st.button("▶ Simular politica (s, Q)", type="primary"):
         pass
 r = st.session_state.get("sim_inv")
 if r and r["sku"] == sku:
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Punto de reorden s", f"{r['punto_reorden_s']:,} un",
-              f"SS: {r['stock_seguridad']:,} un", delta_color="off")
-    m2.metric("Lote Q (pallets completos)", f"{r['lote_Q']:,} un",
-              f"{r['pallets_por_lote']} pallets · EOQ {r['eoq_teorico']:,}",
-              delta_color="off")
-    m3.metric("Fill rate", f"{r['fill_rate_prom']*100:.2f}%",
-              f"p05: {r['fill_rate_p05']*100:.2f}% (objetivo {int(nivel*100)}%)",
-              delta_color="off")
-    m4.metric("Capital inmovilizado prom.",
-              f"${r['capital_inmovilizado_cop']:,.0f}",
-              f"{r['inventario_prom_unidades']:,} un promedio", delta_color="off")
+    with st.container(border=True):
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Punto de reorden s", f"{r['punto_reorden_s']:,} un",
+                  f"SS: {r['stock_seguridad']:,} un", delta_color="off")
+        m2.metric("Lote Q (pallets completos)", f"{r['lote_Q']:,} un",
+                  f"{r['pallets_por_lote']} pallets · EOQ {r['eoq_teorico']:,}",
+                  delta_color="off")
+        m3.metric("Fill rate", f"{r['fill_rate_prom']*100:.2f}%",
+                  f"p05: {r['fill_rate_p05']*100:.2f}% (objetivo {int(nivel*100)}%)",
+                  delta_color="off")
+        m4.metric("Capital inmovilizado prom.",
+                  f"${r['capital_inmovilizado_cop']:,.0f}",
+                  f"{r['inventario_prom_unidades']:,} un promedio", delta_color="off")
 
     tray = r["trayectoria_ejemplo"]
     fig = go.Figure()
@@ -81,7 +82,7 @@ if r and r["sku"] == sku:
 st.divider()
 
 # ------------------------------------------------------------------ MRP
-st.subheader("Plan de compras (explosion MRP)")
+st.subheader("🧮 Plan de compras (explosion MRP)")
 c1, c2 = st.columns(2)
 scrap = c1.slider("Scrap / merma de proceso", 0.0, 0.10, 0.02, 0.005,
                   format="%.3f")
@@ -96,10 +97,11 @@ if st.button("💾 Guardar plan de compras en la base ERP"):
 st.dataframe(plan, width="stretch", hide_index=True,
              column_config={"subtotal_cop": st.column_config.NumberColumn(format="$%,.0f"),
                             "precio_unitario_cop": st.column_config.NumberColumn(format="$%,.2f")})
-c1, c2, c3 = st.columns(3)
-c1.metric("Lineas de pedido", len(plan))
-c2.metric("Proveedores", plan["proveedor"].nunique())
-c3.metric("Total del plan", f"${plan['subtotal_cop'].sum():,.0f} COP")
+with st.container(border=True):
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Lineas de pedido", len(plan))
+    c2.metric("Proveedores", plan["proveedor"].nunique())
+    c3.metric("Total del plan", f"${plan['subtotal_cop'].sum():,.0f} COP")
 st.caption("Cada linea conserva su **producto** — asi cada orden de compra queda "
            "vinculada a un SKU rastreable por MQTT. La pagina *Ordenes Odoo* "
            "convierte este plan en `purchase.order`.")

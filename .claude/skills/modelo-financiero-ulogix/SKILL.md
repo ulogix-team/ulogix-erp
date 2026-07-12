@@ -83,20 +83,38 @@ nuevo si ha pasado tiempo).
 | Payback | 33 m simple / 42 m descontado |
 | Sensibilidad VPN | $2.380 M (Cons.) — $12.831 M (Opt.) |
 
-## El libro Excel (23 hojas)
+## El libro Excel (23 hojas del seed original + `Empleados`/`APU_Ingenieria` agregadas por el ERP)
 
 Orden y responsables:
 
 | Área | Hojas | Dirección |
 |---|---|---|
 | — | LEEME_Integracion, Reportes | fórmulas |
-| Finanzas | `Parametros`, `CAPEX` | **usuario edita → `core/finanzas_negocio.py` LEE** (Sheets → ERP, nuevo) |
+| Finanzas | `Parametros`, `CAPEX` | **usuario edita → `core/finanzas_negocio.py` LEE** (Sheets → ERP) |
+| Finanzas | `APU_Ingenieria` (justificación de las 3 filas `Servicios` de `CAPEX`, AIU) | **ERP escribe** (`tools/publicar_apu_ingenieria.py`), solo exhibición — no alimenta cálculos |
 | Finanzas | Modelo_Negocio, ER_Proyecto, Flujo_Caja, Balance, FinancieroEscenario, Sensibilidad, Licencias, Personal, Costos_Lote, Dep_Amort | equipo + fórmulas |
+| RRHH | `Empleados` (roster individual, ver skill `integraciones-erp-ulogix`) | **ERP escribe/lee** (`integrations/rrhh_client.py`), separado de `Personal` |
 | Ventas | Demanda, DemandaEscenario | **app escribe** (ERP → Sheets, rango fijo `A4:F16`) |
 | Inventario | Inventarios | **app escribe** (`A4:I8`) + fórmulas de rotación |
 | Compras | PlanCompras | app escribe |
 | Producción | KPIs_UNS, LibroProduccion, ResumenMensual | middleware escribe (MQTT/UNS) |
 | Producción (doc.) | Tiempos, OEE_TEEP | **documentales, NO conectadas** |
+
+### Costos de ingeniería ULogix (APU) — `APU_Ingenieria`
+
+Justifica, con metodología APU (Análisis de Precios Unitarios, estándar de
+construcción/EPC en Colombia), las 3 filas `Servicios` de `CAPEX`
+(Ingeniería de detalle/FAT/SAT/PMO, Instalación/EPC, Capacitación/gestión
+del cambio): `precio_total = costo_directo × (1 + AIU)`. La mano de obra
+propia usa el costo real de nómina de `data/empleados.csv`; los rubros de
+subcontratistas/OEM (FAT/SAT, cuadrillas de instalación) son supuestos de
+mercado documentados línea por línea — **no cotizaciones reales**, a validar
+antes de contratar. **AIU es una banda de mercado (25–30%), no una tarifa
+fijada por ley** — no afirmes lo contrario. El AIU implícito resultante en
+los 3 ítems (27–28%) confirma que los montos de `CAPEX` ya estaban bien
+calibrados: **el precio total no cambió**, solo se justificó de abajo hacia
+arriba. Regenerar: `python tools/publicar_apu_ingenieria.py` (también anota
+las 3 filas de `Servicios` con `(ver hoja APU_Ingenieria)`, solo texto).
 
 **Rangos fijos**: `ER_Proyecto`, `Flujo_Caja`, `Balance`, `FinancieroEscenario` y
 la rotación de `Inventarios` referencian esas celdas con fórmulas. Si mueves las

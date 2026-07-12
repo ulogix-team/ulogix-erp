@@ -44,6 +44,7 @@ Sheets** de la página Finanzas para forzarlo al instante):
 | Financiero | `CAPEX` (tabla: sección, línea, activo, cantidad, moneda, costo_unitario, vida_años, categoría_dep) | **Sheets → ERP** | `leer_capex()` | tabla, encabezado reconocido por nombre de columna |
 | Financiero | `Licencias` (`CAPEX software capitalizable`, `OPEX mensual licencias` — última celda no vacía de la fila) | **Sheets → ERP** | `leer_licencias()` | filas etiquetadas, sin columna fija |
 | RRHH | `Empleados` (roster individual — ver `integrations/rrhh_client.py`) | ERP → Sheets *(alta)* / **Sheets → ERP** *(lectura)* | `leer_empleados()` / `publicar_empleados()` / `agregar_empleado()` | reemplazo o append, sin fórmulas dependientes |
+| Financiero | `APU_Ingenieria` (costos de ingeniería que cobra ULogix, justificados por AIU) | ERP → Sheets | `tools/publicar_apu_ingenieria.py` (escribe) / `leer_apu_ingenieria()` (lee, solo exhibición) | reemplazo, sin fórmulas dependientes |
 
 **Formato numérico del libro real: colombiano, no inglés.** Punto = separador
 de miles, coma = separador decimal (`"3.850"` = 3850, `"18,00%"` = 0.18,
@@ -99,6 +100,25 @@ hoja `Licencias` (filas `CAPEX software capitalizable` / `OPEX mensual
 licencias`), leídas por `leer_licencias()`. Si una hoja no existe, está vacía
 o no se reconoce ninguna columna esperada, el motor cae a su default local —
 no hay error visible al usuario, solo se ignora la hoja.
+
+**Contrato de la hoja `APU_Ingenieria`** (costos de ingeniería que cobra
+ULogix, solo exhibición — no alimenta ningún cálculo, los montos que sí
+computan siguen siendo los de `CAPEX`): dos bloques marcados por una fila
+`RESUMEN` y una fila `DETALLE`, cada uno con su propia fila de encabezado
+inmediatamente debajo (`leer_apu_ingenieria()` los ubica por esa etiqueta,
+no por posición fija). `RESUMEN`: `item, costo_directo_cop,
+pct_administracion, pct_imprevistos, pct_utilidad, pct_aiu_total, aiu_cop,
+precio_total_cop` — una fila por ítem de `Servicios`. `DETALLE`: `item,
+componente, descripcion, cantidad, unidad, valor_unitario_cop, subtotal_cop,
+tipo_costo` — todas las líneas de costo de los tres ítems, con filas de
+subtotal/AIU/total intercaladas (columna `item` vacía en esas). Metodología
+APU (Análisis de Precios Unitarios, estándar de construcción/EPC en
+Colombia): `precio_total = costo_directo × (1 + AIU)`, AIU = Administración +
+Imprevistos + Utilidad — banda de mercado 25–30%, **no una tarifa fijada por
+ley** (COPNIA no fija honorarios mínimos desde la desregulación). Se publica
+con `python tools/publicar_apu_ingenieria.py` (también anota las 3 filas de
+`Servicios` en `CAPEX` con `(ver hoja APU_Ingenieria)`, solo en la columna de
+descripción). Se muestra en la página *Finanzas*.
 
 Los rangos **fijos** de `Demanda`/`DemandaEscenario`/`Inventarios` existen
 porque las hojas financieras (`ER_Proyecto`, `Flujo_Caja`, `Balance`,

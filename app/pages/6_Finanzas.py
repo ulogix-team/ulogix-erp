@@ -195,18 +195,19 @@ with cfb:
         st.session_state["_forzar_refresco_fin"] = True
         st.rerun()
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("CAPEX total", f"$ {ind['capex_total_cop']/1e9:,.2f} MM COP",
-          f"celdas roboticas: $ {ind['capex_celdas_cop']/1e6:,.0f} M (BOM real)",
-          delta_color="off")
-c2.metric("VPN @ TMAR 18% E.A.", f"$ {ind['vpn_cop']/1e6:,.0f} M COP",
-          None if nombre_activo == "Base" else
-          f"{(ind['vpn_cop'] - ind_base['vpn_cop'])/1e6:+,.0f} M vs Base")
-c3.metric("TIR / ROI 60m", f"{ind['tir_anual']*100:.1f}% E.A.",
-          f"ROI {ind['roi_horizonte_60m']*100:.1f}% "
-          f"({ind['roi_anualizado']*100:.2f}% anual)", delta_color="off")
-c4.metric("Payback", f"{ind['payback_simple_meses']} meses",
-          f"descontado: {ind['payback_descontado_meses']} m", delta_color="off")
+with st.container(border=True):
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("CAPEX total", f"$ {ind['capex_total_cop']/1e9:,.2f} MM COP",
+              f"celdas roboticas: $ {ind['capex_celdas_cop']/1e6:,.0f} M (BOM real)",
+              delta_color="off")
+    c2.metric("VPN @ TMAR 18% E.A.", f"$ {ind['vpn_cop']/1e6:,.0f} M COP",
+              None if nombre_activo == "Base" else
+              f"{(ind['vpn_cop'] - ind_base['vpn_cop'])/1e6:+,.0f} M vs Base")
+    c3.metric("TIR / ROI 60m", f"{ind['tir_anual']*100:.1f}% E.A.",
+              f"ROI {ind['roi_horizonte_60m']*100:.1f}% "
+              f"({ind['roi_anualizado']*100:.2f}% anual)", delta_color="off")
+    c4.metric("Payback", f"{ind['payback_simple_meses']} meses",
+              f"descontado: {ind['payback_descontado_meses']} m", delta_color="off")
 
 if nombre_activo != "Base":
     comp = pd.DataFrame([
@@ -260,3 +261,68 @@ if nombre_activo != "Base":
 fig_bc.add_hline(y=0, line_color="#666", line_width=1)
 theme.plotly_layout(fig_bc, "Flujo de caja del proyecto (M COP) · 60 meses")
 st.plotly_chart(fig_bc, width="stretch")
+
+# ================================================================ costos de ingenieria (APU)
+st.divider()
+st.subheader("Costos de ingeniería ULogix — Análisis de Precios Unitarios (APU)")
+st.caption("Justificación, componente por componente, de lo que ULogix cobra por "
+           "ingeniería de detalle/FAT/SAT/PMO, instalación/puesta en marcha (EPC) y "
+           "capacitación/gestión del cambio — las tres filas de **Servicios** de la "
+           "hoja **CAPEX**. Metodología estándar de costeo en construcción/EPC: "
+           "**costo directo × (1 + AIU)**, donde AIU = Administración + Imprevistos + "
+           "Utilidad (banda de mercado 25–30% — no es una tarifa fijada por ley: desde "
+           "la desregulación de honorarios profesionales, COPNIA no fija tarifas "
+           "mínimas, es de negociación contractual). La mano de obra propia usa el "
+           "costo real de nómina de `data/empleados.csv` (RRHH); los rubros de "
+           "terceros/OEM son supuestos de mercado documentados, a validar con "
+           "cotización real antes de contratar. Ver `tools/publicar_apu_ingenieria.py`.")
+
+from integrations.sheets_client import Contabilidad as _Cont  # noqa: E402
+apu = _Cont().leer_apu_ingenieria()
+
+if not apu["resumen"]:
+    st.info("Aún no se ha publicado la hoja `APU_Ingenieria` — corre "
+            "`python tools/publicar_apu_ingenieria.py` (requiere Sheets configurado; "
+            "esta hoja es de solo exhibición, sin fallback local).")
+else:
+    df_resumen = pd.DataFrame(apu["resumen"])
+    total_directo = df_resumen["costo_directo_cop"].sum()
+    total_precio = df_resumen["precio_total_cop"].sum()
+    aiu_global = total_precio / total_directo - 1
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Costo directo total", f"$ {total_directo/1e6:,.0f} M COP", delta_color="off")
+    c2.metric("AIU implícito", f"{aiu_global*100:.1f}%",
+              "banda de mercado 25–30%", delta_color="off")
+    c3.metric("Precio total (= CAPEX Servicios)", f"$ {total_precio/1e6:,.0f} M COP",
+              delta_color="off")
+
+    fig_apu = go.Figure()
+    fig_apu.add_trace(go.Bar(y=df_resumen["item"], x=df_resumen["costo_directo_cop"] / 1e6,
+                             name="Costo directo", orientation="h",
+                             marker_color=COL["acento"]))
+    fig_apu.add_trace(go.Bar(y=df_resumen["item"], x=df_resumen["aiu_cop"] / 1e6,
+                             name="AIU (Admin+Imprev+Util)", orientation="h",
+                             marker_color=COL.get("acento2", "#5AC8FA")))
+    fig_apu.update_layout(barmode="stack", xaxis_title="M COP")
+    st.plotly_chart(theme.plotly_layout(fig_apu, "Costo directo vs. AIU por ítem"),
+                    width="stretch")
+
+    st.dataframe(
+        df_resumen[["item", "costo_directo_cop", "pct_aiu_total", "aiu_cop",
+                   "precio_total_cop"]],
+        width="stretch", hide_index=True,
+        column_config={
+            "costo_directo_cop": st.column_config.NumberColumn("Costo directo", format="$%,.0f"),
+            "pct_aiu_total": st.column_config.NumberColumn("AIU %", format="%.1f%%"),
+            "aiu_cop": st.column_config.NumberColumn("AIU COP", format="$%,.0f"),
+            "precio_total_cop": st.column_config.NumberColumn("Precio total", format="$%,.0f"),
+        })
+
+    with st.expander("Detalle por componente (mano de obra, terceros/OEM, materiales, logística)"):
+        df_detalle = pd.DataFrame(apu["detalle"])
+        st.dataframe(df_detalle, width="stretch", hide_index=True,
+                    column_config={
+                        "valor_unitario_cop": st.column_config.NumberColumn(format="$%,.0f"),
+                        "subtotal_cop": st.column_config.NumberColumn(format="$%,.0f"),
+                    })

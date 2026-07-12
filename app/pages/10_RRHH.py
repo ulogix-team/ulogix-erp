@@ -41,14 +41,15 @@ if problemas:
         st.warning(f"⚠️ {p}")
 
 # ------------------------------------------------------------------ resumen
-st.subheader("1 · Dotación")
-c1, c2, c3, c4 = st.columns(4)
-activos = df[df["estado"] == "activo"]
-c1.metric("Personas activas", f"{len(activos):,.0f}", f"{len(df) - len(activos)} inactivas/otro estado")
-costo_fase = rrhh.costo_mensual_por_fase(df)
-c2.metric("Nómina Operación/mes", f"${costo_fase.get('Operacion', 0):,.0f}")
-c3.metric("Nómina Implementación/mes", f"${costo_fase.get('Implementacion', 0):,.0f}")
-c4.metric("Costo total/mes", f"${sum(costo_fase.values()):,.0f}")
+st.subheader("1 · 🧑‍🤝‍🧑 Dotación")
+with st.container(border=True):
+    c1, c2, c3, c4 = st.columns(4)
+    activos = df[df["estado"] == "activo"]
+    c1.metric("Personas activas", f"{len(activos):,.0f}", f"{len(df) - len(activos)} inactivas/otro estado")
+    costo_fase = rrhh.costo_mensual_por_fase(df)
+    c2.metric("Nómina Operación/mes", f"${costo_fase.get('Operacion', 0):,.0f}")
+    c3.metric("Nómina Implementación/mes", f"${costo_fase.get('Implementacion', 0):,.0f}")
+    c4.metric("Costo total/mes", f"${sum(costo_fase.values()):,.0f}")
 
 resumen_rol = rrhh.resumen_por_rol(df)
 fig = go.Figure()
@@ -60,7 +61,7 @@ st.dataframe(resumen_rol, width="stretch", hide_index=True,
             column_config={"costo_total_mes_cop": st.column_config.NumberColumn(format="$%,.0f"),
                           "costo_unitario_cop": st.column_config.NumberColumn(format="$%,.0f")})
 
-st.subheader("2 · Dotación por línea y turno")
+st.subheader("2 · 🏭 Dotación por línea y turno")
 resumen_linea = rrhh.resumen_por_linea(df)
 if len(resumen_linea):
     fig2 = go.Figure()
@@ -75,7 +76,7 @@ else:
 st.divider()
 
 # ------------------------------------------------------------------ reconciliacion
-st.subheader("3 · Reconciliación contra la hoja Personal")
+st.subheader("3 · ⚖️ Reconciliación contra la hoja Personal")
 nomina_personal = rrhh_client.leer_nomina_personal()
 if nomina_personal is None:
     st.info("No se pudo leer la hoja **Personal** del libro (Sheets no conectado, o "
@@ -85,23 +86,24 @@ else:
     rec = rrhh.reconciliar_con_personal(
         df, nomina_personal.get("nomina_operacion_mes", 0.0),
         nomina_personal.get("nomina_implementacion_mes", 0.0))
-    c1, c2 = st.columns(2)
-    with c1:
-        ok = rec["operacion_reconciliado"]
-        st.metric("Operación: roster vs. Personal",
-                 f"${rec['operacion_roster_cop']:,.0f}",
-                 f"{'✅ cuadra' if ok else '⚠️ difiere'} vs Personal "
-                 f"${rec['operacion_personal_cop']:,.0f} "
-                 f"({rec['operacion_diferencia_cop']:+,.0f})",
-                 delta_color="off" if ok else "inverse")
-    with c2:
-        ok = rec["implementacion_reconciliado"]
-        st.metric("Implementación: roster vs. Personal",
-                 f"${rec['implementacion_roster_cop']:,.0f}",
-                 f"{'✅ cuadra' if ok else '⚠️ difiere'} vs Personal "
-                 f"${rec['implementacion_personal_cop']:,.0f} "
-                 f"({rec['implementacion_diferencia_cop']:+,.0f})",
-                 delta_color="off" if ok else "inverse")
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            ok = rec["operacion_reconciliado"]
+            st.metric("Operación: roster vs. Personal",
+                     f"${rec['operacion_roster_cop']:,.0f}",
+                     f"{'✅ cuadra' if ok else '⚠️ difiere'} vs Personal "
+                     f"${rec['operacion_personal_cop']:,.0f} "
+                     f"({rec['operacion_diferencia_cop']:+,.0f})",
+                     delta_color="off" if ok else "inverse")
+        with c2:
+            ok = rec["implementacion_reconciliado"]
+            st.metric("Implementación: roster vs. Personal",
+                     f"${rec['implementacion_roster_cop']:,.0f}",
+                     f"{'✅ cuadra' if ok else '⚠️ difiere'} vs Personal "
+                     f"${rec['implementacion_personal_cop']:,.0f} "
+                     f"({rec['implementacion_diferencia_cop']:+,.0f})",
+                     delta_color="off" if ok else "inverse")
     if not (rec["operacion_reconciliado"] and rec["implementacion_reconciliado"]):
         st.caption("La diferencia significa que alguien editó el roster individual "
                   "(Empleados) o el agregado (Personal) sin actualizar el otro — "
@@ -110,7 +112,7 @@ else:
 st.divider()
 
 # ------------------------------------------------------------------ roster
-st.subheader("4 · Roster completo")
+st.subheader("4 · 📋 Roster completo")
 f1, f2, f3, f4 = st.columns(4)
 filtro_linea = f1.multiselect("Línea", sorted(df["linea"].unique()))
 filtro_turno = f2.multiselect("Turno", sorted(df["turno"].unique()))
@@ -129,7 +131,7 @@ st.dataframe(vista, width="stretch", hide_index=True,
 st.divider()
 
 # ------------------------------------------------------------------ alta de empleado
-st.subheader("5 · Agregar empleado")
+st.subheader("5 · ➕ Agregar empleado")
 roles_conocidos = sorted(df["rol_personal"].unique())
 with st.form("nuevo_empleado"):
     c1, c2, c3 = st.columns(3)

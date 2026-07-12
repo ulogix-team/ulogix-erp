@@ -30,15 +30,16 @@ MES_NUM = {m: i + 1 for i, m in enumerate(
      "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"])}
 
 # --------------------------------------------------------- backtest + validacion
-st.subheader("Backtest un-paso (5 trimestres) y validacion 2026T1")
-cols = st.columns(3)
-for col, r in zip(cols, metricas.itertuples()):
-    v = val.get(r.producto, {})
-    with col:
-        st.metric(NOMBRE_CORTO[[s for s in SKUS if PROD_DE[s] == r.producto][0]],
-                  f"MAPE {r.mape*100:.2f}%",
-                  f"2026T1: {v.get('error_pct', 0):+.2f}% · TS {r.tracking_signal:+.2f}",
-                  delta_color="off")
+st.subheader("📊 Backtest un-paso (5 trimestres) y validacion 2026T1")
+with st.container(border=True):
+    cols = st.columns(3)
+    for col, r in zip(cols, metricas.itertuples()):
+        v = val.get(r.producto, {})
+        with col:
+            st.metric(NOMBRE_CORTO[[s for s in SKUS if PROD_DE[s] == r.producto][0]],
+                      f"MAPE {r.mape*100:.2f}%",
+                      f"2026T1: {v.get('error_pct', 0):+.2f}% · TS {r.tracking_signal:+.2f}",
+                      delta_color="off")
 st.caption("Modelos: " + " · ".join(
     f"**{r.producto}**: {r.modelo}" for r in metricas.itertuples()) +
     ". La validacion compara el modelo entrenado hasta 2025T4 contra el dato real "
@@ -63,7 +64,7 @@ st.info(f"**Diferenciacion P1 vs P2** — correlacion mensual: historico "
         f"+ perfil de formato mensual, ambos editables).")
 
 # --------------------------------------------------------- grafico mensual + historico
-st.subheader("Serie mensual por producto: historico real + pronostico")
+st.subheader("📈 Serie mensual por producto: historico real + pronostico")
 sel = st.multiselect("Productos", SKUS, default=SKUS,
                      format_func=lambda s: NOMBRE_CORTO[s])
 escala_log = st.toggle("Escala logaritmica (compara los 3 ordenes de magnitud)",
@@ -107,7 +108,7 @@ st.caption("Historico: reconstruccion a escala planta de los 21 trimestres reale
            "10.000 simulaciones Monte Carlo.")
 
 # --------------------------------------------------------- trimestral
-st.subheader("Serie trimestral (litros): historico + pronostico")
+st.subheader("📉 Serie trimestral (litros): historico + pronostico")
 figq = go.Figure()
 hq = hist_q.copy()
 for sku in SKUS:
@@ -132,7 +133,7 @@ theme.plotly_layout(figq, "Litros/trimestre (escala log) · 2021T1 → 2027T1")
 st.plotly_chart(figq, width="stretch")
 
 # --------------------------------------------------------- tabla y descarga
-st.subheader("Plan mensual (unidades) — escenario Base")
+st.subheader("🗂️ Plan mensual (unidades) — escenario Base")
 tabla = mensual[["etiqueta"] + [f"{s}_unidades" for s in SKUS] +
                 [f"{s}_p05" for s in SKUS] + [f"{s}_p95" for s in SKUS]]
 st.dataframe(tabla, width="stretch", hide_index=True, height=330)

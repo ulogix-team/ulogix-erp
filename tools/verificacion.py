@@ -191,8 +191,17 @@ def _toee():
 
 @paso("14. Caso de negocio (ROI/VPN/TIR)")
 def _fin():
+    # QA de LOGICA del motor (defaults/fallback), no del CAPEX en vivo: el
+    # usuario edita CAPEX/Parametros en Sheets a proposito (decision #3 de
+    # CLAUDE.md) y esos valores reales cambian el caso de negocio real por
+    # diseño -- probar eso pertenece a la pagina Finanzas, no a este assert
+    # fijo. Se fuerza dry-run aunque haya credenciales reales, igual que los
+    # pasos 7-9.
+    from config import settings
     from core.finanzas_negocio import indicadores
+    previo, settings.DRY_RUN_FORZADO = settings.DRY_RUN_FORZADO, True
     ind = indicadores()
+    settings.DRY_RUN_FORZADO = previo
     assert ind["vpn_cop"] > 0 and 0.20 < ind["tir_anual"] < 0.50
     assert ind["payback_simple_meses"] == 33
     return (f"VPN ${ind['vpn_cop']/1e6:,.0f}M · TIR {ind['tir_anual']*100:.1f}% · "

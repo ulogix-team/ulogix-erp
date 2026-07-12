@@ -30,7 +30,7 @@ estado = "🟢 conectado a " + settings.ODOO_URL if not odoo.dry_run else \
 st.caption(f"Estado Odoo: {estado}")
 
 # ------------------------------------------------------------------ propuesta de POs
-st.subheader("1 · Propuesta de ordenes")
+st.subheader("1 · 🛒 Propuesta de ordenes")
 c1, c2 = st.columns(2)
 scrap = c1.slider("Scrap", 0.0, 0.10, 0.02, 0.005, format="%.3f")
 cobertura = c2.slider("Meses a convertir en ordenes", 1, 12, 1)
@@ -125,26 +125,27 @@ if st.button("🛒 Crear ordenes en Odoo", type="primary", disabled=not sel_refs
 st.divider()
 
 # ------------------------------------------------------------------ seguimiento
-st.subheader("2 · Seguimiento de ordenes vinculadas")
+st.subheader("2 · 🔗 Seguimiento de ordenes vinculadas")
 pos = state_store.listar_pos()
 if not pos:
     st.info("Aun no hay ordenes vinculadas. Crea ordenes arriba; luego alimenta "
             "produccion por MQTT (pagina *Produccion MQTT*).")
 else:
     iconos = {"abierta": "🔵", "cumplida": "🟠", "recibida_odoo": "🟢", "error": "🔴"}
-    for p in pos[:40]:
-        avance = min(1.0, p["qty_producida"] / max(p["qty_objetivo"], 1e-9))
-        c1, c2 = st.columns([3, 1])
-        with c1:
-            insumo_icono = "📦" if p.get("insumos_recibidos") else "⏳"
-            st.progress(avance,
-                        text=f"{iconos.get(p['estado'],'⚪')} **{p['po_name']}** · "
-                             f"{p['sku']} · {p['qty_producida']:,.0f} / "
-                             f"{p['qty_objetivo']:,.0f} un · {p['proveedor']} · "
-                             f"{insumo_icono} MO `{p.get('mo_name') or '—'}`")
-        with c2:
-            st.caption(f"`{p['estado']}`<br/>{p['actualizado_ts'][:16]}",
-                       unsafe_allow_html=True)
+    with st.container(border=True):
+        for p in pos[:40]:
+            avance = min(1.0, p["qty_producida"] / max(p["qty_objetivo"], 1e-9))
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                insumo_icono = "📦" if p.get("insumos_recibidos") else "⏳"
+                st.progress(avance,
+                            text=f"{iconos.get(p['estado'],'⚪')} **{p['po_name']}** · "
+                                 f"{p['sku']} · {p['qty_producida']:,.0f} / "
+                                 f"{p['qty_objetivo']:,.0f} un · {p['proveedor']} · "
+                                 f"{insumo_icono} MO `{p.get('mo_name') or '—'}`")
+            with c2:
+                st.caption(f"`{p['estado']}`<br/>{p['actualizado_ts'][:16]}",
+                           unsafe_allow_html=True)
 
 with st.expander("Ordenes en Odoo (lectura directa de la API)"):
     c1, c2 = st.columns(2)

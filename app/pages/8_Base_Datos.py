@@ -20,14 +20,15 @@ theme.encabezado("PERSISTENCIA · SQLITE WAL",
                  "como volumen para que sobreviva reinicios.")
 
 resumen = state_store.resumen_tablas()
-cols = st.columns(len(resumen))
-for col, (tabla, n) in zip(cols, resumen.items()):
-    col.metric(tabla, f"{n:,}")
+with st.container(border=True):
+    cols = st.columns(len(resumen))
+    for col, (tabla, n) in zip(cols, resumen.items()):
+        col.metric(tabla, f"{n:,}")
 
 st.divider()
 
 # --------------------------------------------------------------- navegador
-st.subheader("Navegador de tablas")
+st.subheader("🔎 Navegador de tablas")
 c1, c2 = st.columns([2, 1])
 tabla = c1.selectbox("Tabla", state_store.TABLAS_ERP)
 limite = c2.number_input("Ultimas filas", 10, 5000, 300, step=50)
@@ -44,7 +45,7 @@ else:
 
 # --------------------------------------------------------------- tablero KPI UNS
 st.divider()
-st.subheader("Tablero de KPIs del UNS (ultimo valor por linea)")
+st.subheader("📊 Tablero de KPIs del UNS (ultimo valor por linea)")
 kpis = state_store.kpis_actuales()
 if kpis:
     piv = (pd.DataFrame(kpis)

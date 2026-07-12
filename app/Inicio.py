@@ -16,48 +16,50 @@ theme.encabezado("ULOGIX · PLANTA FONTIBON · KOF / INDEGA",
                  "produccion via MQTT y finanzas — sobre el pipeline 00-14 del proyecto.")
 
 # ------------------------------------------------------------------ estado de conexiones
-st.subheader("Integraciones")
-cols = st.columns(3)
-estado = settings.resumen_conexiones()
-iconos = {"odoo": "🟣", "mqtt": "📡", "sheets": "📗"}
-nombres = {"odoo": "Odoo (API externa)", "mqtt": "MQTT (stack MES)",
-           "sheets": "Contabilidad (Sheets/Excel)"}
-for col, (clave, info) in zip(cols, estado.items()):
-    with col:
-        modo = "conectado" if info["habilitado"] else "dry-run / local"
-        st.metric(f"{iconos[clave]} {nombres[clave]}", modo, info["detalle"])
+st.subheader("🔌 Integraciones")
+with st.container(border=True):
+    cols = st.columns(3)
+    estado = settings.resumen_conexiones()
+    iconos = {"odoo": "🟣", "mqtt": "📡", "sheets": "📗"}
+    nombres = {"odoo": "Odoo (API externa)", "mqtt": "MQTT (stack MES)",
+               "sheets": "Contabilidad (Sheets/Excel)"}
+    for col, (clave, info) in zip(cols, estado.items()):
+        with col:
+            modo = "conectado" if info["habilitado"] else "dry-run / local"
+            st.metric(f"{iconos[clave]} {nombres[clave]}", modo, info["detalle"])
 
-with st.expander("Probar conexion con Odoo"):
-    if st.button("Probar ahora", type="primary"):
-        from integrations.odoo_client import OdooClient
-        res = OdooClient().probar_conexion()
-        (st.success if res["ok"] else st.error)(f"{res['modo']}: {res['detalle']}")
-    st.caption("Sin credenciales en `.env` la suite opera en dry-run: cada accion "
-               "queda auditada en SQLite y el flujo completo es demostrable.")
+    with st.expander("Probar conexion con Odoo"):
+        if st.button("Probar ahora", type="primary"):
+            from integrations.odoo_client import OdooClient
+            res = OdooClient().probar_conexion()
+            (st.success if res["ok"] else st.error)(f"{res['modo']}: {res['detalle']}")
+        st.caption("Sin credenciales en `.env` la suite opera en dry-run: cada accion "
+                   "queda auditada en SQLite y el flujo completo es demostrable.")
 
 st.divider()
 
 # ------------------------------------------------------------------ KPIs del pronostico
-st.subheader("Demanda pronosticada (Abr 2026 – Mar 2027)")
+st.subheader("📈 Demanda pronosticada (Abr 2026 – Mar 2027)")
 theme.banner_escenario()
 nombre_esc, dem = theme.demanda_activa()
-cols = st.columns(3)
-for col, sku in zip(cols, COLOR_SKU):
-    total = int(dem[f"{sku}_unidades"].sum())
-    pico = dem.loc[dem[f"{sku}_unidades"].idxmax()]
-    with col:
-        st.metric(NOMBRE_CORTO[sku], f"{total:,.0f} un/año",
-                  f"pico {pico['etiqueta']}: {int(pico[f'{sku}_unidades']):,}")
+with st.container(border=True):
+    cols = st.columns(3)
+    for col, sku in zip(cols, COLOR_SKU):
+        total = int(dem[f"{sku}_unidades"].sum())
+        pico = dem.loc[dem[f"{sku}_unidades"].idxmax()]
+        with col:
+            st.metric(NOMBRE_CORTO[sku], f"{total:,.0f} un/año",
+                      f"pico {pico['etiqueta']}: {int(pico[f'{sku}_unidades']):,}")
 
-base = theme.datos_pronostico()
-st.caption("Backtest del modelo (hold-out 4 trimestres): "
-           + " · ".join(f"{r.producto}: MAPE {r.mape*100:.1f}%"
-                        for r in base["metricas"].itertuples()))
+    base = theme.datos_pronostico()
+    st.caption("Backtest del modelo (hold-out 4 trimestres): "
+               + " · ".join(f"{r.producto}: MAPE {r.mape*100:.1f}%"
+                            for r in base["metricas"].itertuples()))
 
 st.divider()
 
 # ------------------------------------------------------------------ arquitectura
-st.subheader("Arquitectura — colgada del UNS FEMSA")
+st.subheader("🏗️ Arquitectura — colgada del UNS FEMSA")
 st.markdown(
     f"""
 ```text
@@ -90,17 +92,17 @@ st.caption("Regla de red del proyecto: procesos fuera de Docker se conectan por 
 
 st.divider()
 c1, c2 = st.columns(2)
-with c1:
-    st.markdown(f"""**Flujo sugerido**
-1. **Pronostico** — revisa el modelo base y su validacion.
+with c1, st.container(border=True):
+    st.markdown("**🧭 Flujo sugerido**")
+    st.markdown(f"""1. **Pronostico** — revisa el modelo base y su validacion.
 2. **Escenarios** — elige o construye un escenario y activalo.
 3. **Inventario** — simula politicas y genera el plan MRP.
 4. **Ordenes Odoo** — convierte el plan en POs reales (o dry-run).
 5. **Produccion MQTT** — sigue el cumplimiento en vivo.
 6. **Finanzas** — margen plan vs real y sincronizacion contable.""")
-with c2:
-    st.markdown(f"""**Notas del proyecto**
-- TEEP ≈ 40% en L1/L2 es el **techo realista** a dos turnos con el
+with c2, st.container(border=True):
+    st.markdown("**📝 Notas del proyecto**")
+    st.markdown(f"""- TEEP ≈ 40% en L1/L2 es el **techo realista** a dos turnos con el
   calendario laboral de Bogota; no es bajo desempeño.
 - Cuello de L3: paletizado manual (2 operarios ⇒ 480 uph).
 - Pendiente: horas programadas reales para cerrar la

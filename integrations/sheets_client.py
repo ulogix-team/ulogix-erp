@@ -416,6 +416,65 @@ class Contabilidad:
                 out["OPEX_LICENCIAS_MES"] = no_vacias[-1]
         return out
 
+    def leer_apu_ingenieria(self) -> dict:
+        """Lee la hoja 'APU_Ingenieria' (Analisis de Precios Unitarios de los
+        costos de ingenieria que cobra ULogix: ingenieria de detalle/FAT/SAT/
+        PMO, instalacion/EPC, capacitacion/gestion del cambio — ver
+        `tools/publicar_apu_ingenieria.py`). Es solo lectura/exhibicion: no
+        alimenta ningun calculo de `core.finanzas_negocio` (los montos ya
+        estan en `CAPEX`, hoja `Servicios`; esta hoja documenta cómo se
+        componen). Devuelve `{'resumen': [...], 'detalle': [...]}` (listas de
+        dict), vacias si la hoja no existe o no tiene el formato esperado —
+        la página *Finanzas* oculta la sección en ese caso, no revienta."""
+        try:
+            if self.modo == "sheets":
+                ws = self._spreadsheet().worksheet("APU_Ingenieria")
+                filas = ws.get_all_values()
+            else:
+                raise RuntimeError("modo excel")
+        except Exception:  # noqa: BLE001
+            from openpyxl import load_workbook
+            if not settings.LEDGER_XLSX.exists():
+                return {"resumen": [], "detalle": []}
+            wb = load_workbook(settings.LEDGER_XLSX, read_only=True)
+            if "APU_Ingenieria" not in wb.sheetnames:
+                return {"resumen": [], "detalle": []}
+            filas = [[c if c is not None else "" for c in row]
+                     for row in wb["APU_Ingenieria"].iter_rows(values_only=True)]
+
+        def _fila_con(etiqueta: str) -> int | None:
+            return next((i for i, f in enumerate(filas) if f and str(f[0]).strip() == etiqueta),
+                       None)
+
+        _NUM = {"costo_directo_cop", "pct_administracion", "pct_imprevistos", "pct_utilidad",
+               "pct_aiu_total", "aiu_cop", "precio_total_cop", "cantidad", "valor_unitario_cop",
+               "subtotal_cop"}
+
+        def _fila_a_dict(encabezado: list[str], fila: list[str]) -> dict:
+            d = dict(zip(encabezado, fila))
+            for k in list(d):
+                if k in _NUM:
+                    d[k] = numero_cop(d[k], d[k])
+            return d
+
+        resumen: list[dict] = []
+        i = _fila_con("RESUMEN")
+        if i is not None and i + 1 < len(filas):
+            enc = [str(c).strip() for c in filas[i + 1]]
+            for f in filas[i + 2:]:
+                if not any(str(c).strip() for c in f):
+                    break
+                resumen.append(_fila_a_dict(enc, f))
+
+        detalle: list[dict] = []
+        i = _fila_con("DETALLE")
+        if i is not None and i + 1 < len(filas):
+            enc = [str(c).strip() for c in filas[i + 1]]
+            for f in filas[i + 2:]:
+                if any(str(c).strip() for c in f):
+                    detalle.append(_fila_a_dict(enc, f))
+        return {"resumen": resumen, "detalle": detalle}
+
     def probar(self) -> dict:
         """Prueba de conectividad: escribe y relee una celda de verificacion."""
         from datetime import datetime, timezone
