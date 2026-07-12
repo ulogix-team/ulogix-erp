@@ -87,6 +87,9 @@ plan MRP, un `purchase.order` de insumos (concentrados, etiquetas, tapas, ...)
 que **se confirma y se recibe de inmediato** (`button_confirm` →
 `stock.picking → button_validate`) — la suite no modela el lead time real del
 proveedor, así que el insumo queda disponible en inventario en el mismo paso.
+Si se pide `facturar=True`, además genera y contabiliza la **factura de
+proveedor** (`account.move` `in_invoice`, vía `action_create_invoice` +
+`action_post`) — la cuenta por pagar, no solo el movimiento de inventario.
 Junto con esa PO se crea **una orden de fabricación por producto y mes**
 (`mrp.production`, ligada a la `mrp.bom` del SKU creada por
 `bootstrap_odoo.py`), confirmada y con los componentes **reservados**
@@ -96,6 +99,25 @@ completarse la producción real vía UNS, **valida la orden de fabricación**
 producto terminado. `integrations.state_store.po_tracking` guarda el vínculo
 PO↔MO (`mo_id`/`mo_name`) para que el middleware sepa cuál validar. Sin
 credenciales la suite opera en `dry-run` y registra todo en SQLite.
+
+**Idempotencia.** `crear_orden_compra`, `crear_orden_fabricacion` y
+`crear_orden_venta` buscan primero una orden **no cancelada** con la misma
+referencia (`origin` en PO/MO, `client_order_ref` en SO —
+`OdooClient._buscar_orden_existente`) antes de crear otra. Sin esto, hacer
+doble clic en "Crear órdenes en Odoo" duplicaba POs/MOs contra la instancia
+real (nos pasó de verdad: ~21 POs con el mismo `origin` en una sesión de
+pruebas).
+
+**Ventas y facturación de cliente.** Cuando una MO queda `recibida_odoo`
+(producto terminado disponible), la página *Ventas y Facturación* la reparte
+entre los clientes de `data/clientes.csv` (columna `participacion`) y por
+cada uno crea un `sale.order` (`OdooClient.crear_orden_venta`): confirma
+(`action_confirm`), entrega (`stock.picking` de salida — misma lógica de
+`quantity_done`/`quantity`+`picked` que `recibir_orden`) y factura
+(`account.move` `out_invoice` vía `_create_invoices`/`action_invoice_create`
++ `action_post`). Cierra el flujo compra-insumo → fabricación → venta →
+factura → cobro. `integrations.state_store.venta_tracking` guarda cada SO
+vinculada a su lote (`mo_name`) para no vender el mismo lote dos veces.
 
 ---
 

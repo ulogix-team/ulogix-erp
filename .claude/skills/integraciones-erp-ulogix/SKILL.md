@@ -1,6 +1,6 @@
 ---
 name: integraciones-erp-ulogix
-description: Trabajar con las integraciones externas del proyecto Ulogix — Odoo (XML-RPC, productos, BOM, órdenes de compra, recepciones) y Google Sheets (cuenta de servicio, publicación de hojas). Úsala SIEMPRE que se mencione Odoo, XML-RPC, purchase.order, mrp.bom, product.template, bootstrap, API key de Odoo, Google Sheets, gspread, cuenta de servicio, spreadsheet, publicar al libro, o los módulos integrations/odoo_client.py, integrations/sheets_client.py, integrations/state_store.py, tools/bootstrap_odoo.py — incluso si el usuario solo dice "no se crea la orden" o "no se actualiza el Excel".
+description: Trabajar con las integraciones externas del proyecto Ulogix — Odoo (XML-RPC, productos, BOM, órdenes de compra/venta, recepciones/entregas, facturación) y Google Sheets (cuenta de servicio, publicación de hojas). Úsala SIEMPRE que se mencione Odoo, XML-RPC, purchase.order, sale.order, mrp.bom, mrp.production, account.move, factura de cliente/proveedor, product.template, bootstrap, API key de Odoo, Google Sheets, gspread, cuenta de servicio, spreadsheet, publicar al libro, o los módulos integrations/odoo_client.py, integrations/sheets_client.py, integrations/state_store.py, tools/bootstrap_odoo.py — incluso si el usuario solo dice "no se crea la orden", "no se actualiza el Excel" o "se duplicaron las órdenes".
 ---
 
 # Integraciones: Odoo y Google Sheets
@@ -56,12 +56,44 @@ ambas órdenes (**una MO por producto+mes**, compartida entre los proveedores
 de ese lote) y que `mqtt_middleware._procesar_produccion` usa para saber cuál
 MO validar.
 
+### Idempotencia (buscar antes de crear)
+
+`crear_orden_compra`, `crear_orden_fabricacion` y `crear_orden_venta` llaman
+primero a `OdooClient._buscar_orden_existente(modelo, campo_referencia,
+referencia)`, que busca una orden **no cancelada** con la misma referencia
+(`origin` en `purchase.order`/`mrp.production`, `client_order_ref` en
+`sale.order`) antes de crear otra. Si el usuario reintenta o hace doble clic
+en el dashboard, la orden se **reutiliza** (`modo: "existente"`) en vez de
+duplicarse. Esto es un fix real: probando contra Odoo real en una sesión
+terminamos con ~21 POs con el mismo `origin` porque cada corrida creaba
+órdenes nuevas.
+
+### Ventas y facturación (cuentas por cobrar/pagar)
+
+El flujo completo es compra-insumo → fabricación → **venta → factura →
+cobro**. `OdooClient.crear_orden_venta(cliente, lineas, referencia, ...)` crea
+un `sale.order`, lo confirma, lo entrega (`entregar_orden_venta` — misma
+lógica de `quantity_done`/`quantity`+`picked` que `recibir_orden`) y lo
+factura (`facturar_orden_venta` — `sale.order._create_invoices` con fallback
+a `action_invoice_create`, luego `account.move.action_post`). La página
+*Ventas y Facturación* toma los lotes cuya MO quedó `recibida_odoo` y los
+reparte entre los clientes de `data/clientes.csv` (columna `participacion`);
+registra cada `sale.order` en `state_store.venta_tracking` (vinculado por
+`mo_name`) para no vender el mismo lote dos veces.
+
+Del lado de compras, `crear_orden_compra(..., facturar=True)` genera además
+la **factura de proveedor** (`facturar_orden_compra` — `purchase.order.
+action_create_invoice` + `action_post`) sobre la PO ya recibida: la cuenta
+por pagar, no solo el movimiento de inventario.
+
 ### Modo dry-run
 
 Sin credenciales (o forzando `settings.DRY_RUN_FORZADO = True`), todo se registra
-en SQLite sin tocar Odoo. La verificación (`tools/verificacion.py`, pasos 7-8)
+en SQLite sin tocar Odoo. La verificación (`tools/verificacion.py`, pasos 7-9)
 **fuerza dry-run a propósito**: prueba la *lógica*, no la conectividad. La
-conectividad real se prueba en la página 7 del dashboard.
+conectividad real se prueba en la página 7 del dashboard. La idempotencia
+(búsqueda por referencia en Odoo) solo se ejerce fuera de dry-run — validarla
+requiere una instancia real.
 
 ## Google Sheets (cuenta de servicio)
 
@@ -95,16 +127,18 @@ misma sesión** de openpyxl (un libro sin hojas visibles no se puede guardar).
 
 ## Base ERP (SQLite WAL)
 
-`integrations/state_store.py` — 7 tablas: `pronosticos`, `plan_compras`,
-`inventario_politicas`, `po_tracking`, `eventos_produccion`, `kpi_uns`,
-`log_acciones`. Docker la monta como volumen para que sobreviva reinicios.
-Navegable en la página 8 del dashboard.
+`integrations/state_store.py` — 8 tablas: `pronosticos`, `plan_compras`,
+`inventario_politicas`, `po_tracking`, `venta_tracking`, `eventos_produccion`,
+`kpi_uns`, `log_acciones`. Docker la monta como volumen para que sobreviva
+reinicios. Navegable en la página 8 del dashboard.
 
 ## Diagnóstico
 
 La **página 7 (Pruebas)** verifica las tres integraciones en vivo: eco MQTT
 round-trip, `authenticate` + versión de Odoo + PO de prueba, y escritura/relectura
-en Sheets + lectura de `Parametros`. Cada error muestra causa y remedio.
+en Sheets + lectura de `Parametros`. Cada error muestra causa y remedio. La
+**página 9 (Ventas y Facturación)** muestra en pantalla (no solo en el log)
+cuando falla la entrega o la factura de una orden de venta/compra.
 
 ## Seguridad
 

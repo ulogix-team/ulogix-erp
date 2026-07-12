@@ -139,9 +139,37 @@ with c4:
         res = cli.completar_orden_fabricacion(res_mo.get("id"), res_mo.get("name", ""))
         (st.success if res.get("ok") else st.error)(json.dumps(res, indent=1,
                                                                 ensure_ascii=False))
+c5, c6 = st.columns(2)
+with c5:
+    if st.button("▶ Crear orden de venta de PRUEBA (P1, 1 unidad, sin facturar)"):
+        from integrations.odoo_client import LineaPedido, OdooClient
+        res = OdooClient().crear_orden_venta(
+            "Cliente de prueba Ulogix",
+            [LineaPedido(nombre="Coca-Cola 350 ml vidrio retornable",
+                         default_code="P1-CC350-RGB", cantidad=1,
+                         precio_unitario=2200.0)],
+            referencia="PRUEBA-API-SO", confirmar=True, entregar=True, facturar=False)
+        st.success(f"✅ SO creada en modo `{res.get('modo')}`: {res.get('name', res)}")
+        st.caption("Requiere que P1 exista y tenga stock (corre primero la prueba "
+                   "de fabricacion de arriba).")
+with c6:
+    if st.button("▶ Facturar esa orden de venta de PRUEBA"):
+        from integrations.odoo_client import LineaPedido, OdooClient
+        cli = OdooClient()
+        res_so = cli.crear_orden_venta(
+            "Cliente de prueba Ulogix",
+            [LineaPedido(nombre="Coca-Cola 350 ml vidrio retornable",
+                         default_code="P1-CC350-RGB", cantidad=1,
+                         precio_unitario=2200.0)],
+            referencia="PRUEBA-API-SO", confirmar=True, entregar=True, facturar=False)
+        res = cli.facturar_orden_venta(res_so.get("id"), res_so.get("name", ""))
+        (st.success if res.get("ok") else st.error)(json.dumps(res, indent=1,
+                                                                ensure_ascii=False))
 st.caption("Para poblar Odoo desde cero (productos P1/P2/P3 con EAN-13, "
            "componentes, proveedores y listas de materiales): "
-           "`python tools/bootstrap_odoo.py` — es idempotente.")
+           "`python tools/bootstrap_odoo.py` — es idempotente. Las pruebas de "
+           "arriba tambien lo son: reintentarlas reutiliza la misma PO/MO/SO "
+           "en vez de duplicarla.")
 
 st.divider()
 
