@@ -117,7 +117,7 @@ nombres de servicio.
   (12 m operativos) · **VPN $8.033 M · TIR 36.6 % E.A. · ROI 103.8 % · payback
   33/42 m**.
 - Libro Excel: 23 hojas, 3.741 fórmulas, **0 errores** tras recalcular.
-- `tools/verificacion.py`: **13/13 en verde**.
+- `tools/verificacion.py`: **14/14 en verde**.
 
 ## Comandos
 
@@ -126,7 +126,7 @@ nombres de servicio.
 docker compose -f docker-compose.dashboard.yml up -d --build
 docker compose -f docker-compose.dashboard.yml logs -f dashboard
 
-# QA completo (13 pasos) — obligatorio antes de cerrar cualquier cambio
+# QA completo (14 pasos) — obligatorio antes de cerrar cualquier cambio
 python tools/verificacion.py
 
 # Poblar Odoo desde cero
