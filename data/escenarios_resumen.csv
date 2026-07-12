@@ -1,0 +1,7 @@
+escenario,P1-CC350-RGB_total,P1-CC350-RGB_delta_pct,P2-QT1500-PET_total,P2-QT1500-PET_delta_pct,P3-GARR25L_total,P3-GARR25L_delta_pct,justificacion
+Base,73690992,0.0,5823965,0.0,186120,0.0,Pronostico estadistico sin ajustes (Holt-Winters + Bates-Granger).
+Mundial 2026,74801031,1.51,5911694,1.51,186587,0.25,"Copa Mundial FIFA jun-jul 2026: plan comercial KOF especifico; +6-10% en gaseosas durante el torneo, efecto marginal en garrafon."
+Paro nacional / choque logistico,72617898,-1.46,5739156,-1.46,183392,-1.47,Bloqueos viales tipo paro 2021: -18% en el mes afectado (parametrizado en mayo; mover el mes editando el diccionario o desde el dashboard).
+Recesion moderada,70006441,-5.0,5532767,-5.0,182399,-2.0,Contraccion del consumo: -5% sostenido en gaseosas; garrafon mas inelastico (-2%) por ser bien basico.
+Restriccion hidrica CAR adicional,73690992,0.0,5823965,0.0,158203,-15.0,Nuevas restricciones de captacion CAR/EAAB: -15% sostenido en garrafon por limite de produccion; sin efecto en gaseosas (jarabe terminado).
+Repunte agresivo post-impuesto,77375543,5.0,6115163,5.0,186120,0.0,Recuperacion de volumen tras absorcion del impuesto saludable (Ley 2277/2022): +5% sostenido en gaseosas sobre base 2025 deprimida.

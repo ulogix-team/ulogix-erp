@@ -1,0 +1,10 @@
+streamlit>=1.49
+plotly>=5.20
+pandas>=2.1
+numpy>=1.26
+statsmodels>=0.14
+paho-mqtt>=2.0
+gspread>=6.0
+python-dotenv>=1.0
+openpyxl>=3.1
+pyyaml>=6.0

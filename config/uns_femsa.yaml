@@ -1,0 +1,52 @@
+# =====================================================================
+# Estructura del UNS (Unified Namespace) - FEMSA
+# ---------------------------------------------------------------------
+# Truco: todo lo que se repite se define UNA vez en `_templates`
+# usando anchors de YAML (&nombre) y luego se reutiliza con alias
+# (*nombre). El script ignora `_templates` y solo publica lo que
+# cuelga de `uns:`.
+#
+# Una clave sin valor (ej. "OEE:") es una HOJA -> se publica como topico.
+# Una clave con hijos es una RAMA -> se convierte en subcarpeta del topico.
+# =====================================================================
+_templates:
+  kpi: &kpi
+    Availability:
+    Quality:
+    Performance:
+    OEE:
+    TEEP:
+    DT:
+    MTTR:
+    MTBF:
+  maintance: &maintance
+    MachineID:
+    LastMaintance:
+    NextMaintance:
+    MaintanceStatus:
+  mes: &mes
+    KPI: *kpi
+    Maintance: *maintance
+  erp: &erp
+    OrderNumber:
+    OrderStatus:
+    ScheduleStart:
+    ScheduleEnd:
+    ActualStart:
+    ActualEnd:
+    AvailableQuantity:
+    ReservedQuantity:
+    OrderedQuantity:
+  # Plantilla completa de una linea de produccion
+  linea: &linea
+    MES: *mes
+    ERP: *erp
+    Process: {}   # aun sin hojas definidas
+# ---------------------------------------------------------------------
+# Jerarquia real del UNS. Agregar una linea nueva = una sola fila :)
+# ---------------------------------------------------------------------
+uns:
+  FEMSA:
+    Linea1: *linea
+    Linea2: *linea
+    Linea3: *linea

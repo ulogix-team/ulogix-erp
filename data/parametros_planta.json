@@ -1,0 +1,79 @@
+{
+  "planta": "Coca-Cola FEMSA / INDEGA — Fontibon, Bogota",
+  "lineas": {
+    "L1": {
+      "producto": "P1-CC350-RGB",
+      "vel_nominal_uph": 42500,
+      "oee": 0.771,
+      "teep": 0.4028,
+      "turnos": 2,
+      "horas_turno": 8,
+      "oee_base": 0.771,
+      "oee_mejorado": 0.81,
+      "dias_operativos": 286
+    },
+    "L2": {
+      "producto": "P2-QT1500-PET",
+      "vel_nominal_uph": 12000,
+      "oee": 0.765,
+      "teep": 0.3996,
+      "turnos": 2,
+      "horas_turno": 8,
+      "oee_base": 0.765,
+      "oee_mejorado": 0.803,
+      "dias_operativos": 286
+    },
+    "L3": {
+      "producto": "P3-GARR25L",
+      "vel_nominal_uph": 480,
+      "oee": 0.754,
+      "teep": 0.0826,
+      "turnos": 1,
+      "horas_turno": 8,
+      "nota": "Cuello de botella: paletizado manual, 2 operarios para 480 uph",
+      "oee_base": 0.754,
+      "oee_mejorado": 0.792,
+      "dias_operativos": 120
+    }
+  },
+  "calendario": {
+    "dias_operativos_ano": 286,
+    "domingos": 52,
+    "festivos_ley_emiliani": 18,
+    "mantenimiento_anual_dias": 10
+  },
+  "litros_por_caja_unidad": 5.678,
+  "participacion_planta_bogota": 0.28,
+  "nota_teep": "TEEP ~40% en L1/L2 es el techo realista a dos turnos con el calendario laboral de Bogota; no es un indicador de bajo desempeno.",
+  "mejora_oee": {
+    "factor": 1.05,
+    "justificacion": {
+      "disponibilidad": "+2.5 pp: celdas roboticas de paletizado eliminan microparos y esperas del paletizado manual; reduccion de MTTR con monitoreo UNS/MES",
+      "rendimiento": "+1.5 pp: modernizacion de llenadoras (retrofit Modulfill/Contiform) estabiliza velocidad real vs nominal",
+      "calidad": "+1.0 pp: inspeccion HEUFT/vision reduce scrap y reprocesos"
+    },
+    "meta_programa_oee": 0.86,
+    "nota": "OEE mejorado = OEE base x 1.05 (fase comprometida). Meta de programa >=86% con mejora continua."
+  },
+  "modelo_negocio": {
+    "tipo": "Retrofit brownfield: 3 lineas existentes FEMSA Fontibon",
+    "alcance": [
+      "Celdas roboticas de paletizado (gantry L1-L2 + robot articulado L3)",
+      "Modernizacion de llenadoras unicamente (retrofit)",
+      "Nuevas areas automatizadas + gemelo digital por equipo (Tecnomatix)",
+      "Trazabilidad MES/Cloud via UNS"
+    ],
+    "objetivos": {
+      "throughput_incremental": 0.11,
+      "oee_objetivo": 0.86,
+      "mejora_flujo_caja": 0.05
+    },
+    "capex_celdas_usd": {
+      "gantry_L1_L2": 107993,
+      "robot_L3": 131896,
+      "total": 239889
+    }
+  },
+  "deriva_mix_retornable_anual": 0.005,
+  "hallazgo_capacidad": "U_2026 con turnos actuales: L1 1.25 · L2 1.30 (INFACTIBLE) · L3 0.80. Con 3er turno L1/L2: 0.83/0.86 -> factible. Fuente: Tiempos_Fontibon_Corregido, hoja Capacidad_vs_Demanda."
+}

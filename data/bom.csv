@@ -1,0 +1,18 @@
+producto,componente,descripcion,uom,cantidad_por_unidad,proveedor,precio_unitario_cop,moq,lead_time_dias
+P1-CC350-RGB,BOT-V350,Botella vidrio 350 ml (reposicion parque),un,0.02,O-I Peldar,980.0,50000,21
+P1-CC350-RGB,TAP-CORONA,Tapa corona 26 mm,un,1.0,Tapas La Libertad,28.0,500000,14
+P1-CC350-RGB,ETIQ-P1,Etiqueta papel 350 ml,un,1.0,Alico,14.0,200000,10
+P1-CC350-RGB,CONC-CC,Concentrado Coca-Cola,L,0.00058,The Coca-Cola Company,185000.0,200,30
+P1-CC350-RGB,AZUCAR,Azucar refinada,kg,0.0378,Incauca,3400.0,10000,7
+P1-CC350-RGB,CO2,CO2 grado alimenticio,kg,0.007,Linde Colombia,2900.0,2000,5
+P2-QT1500-PET,PREF-PET63,Preforma PET 63 g cuello 28 mm,un,1.0,Enka de Colombia,710.0,100000,18
+P2-QT1500-PET,TAP-ROSCA,Tapa rosca 28 mm,un,1.0,Tapas La Libertad,92.0,300000,14
+P2-QT1500-PET,ETIQ-TERMO,Etiqueta termoencogible 1.5 L,un,1.0,Alico,64.0,150000,10
+P2-QT1500-PET,CONC-QT,Concentrado QuAtro,L,0.0025,The Coca-Cola Company,162000.0,200,30
+P2-QT1500-PET,AZUCAR,Azucar refinada,kg,0.162,Incauca,3400.0,10000,7
+P2-QT1500-PET,CO2,CO2 grado alimenticio,kg,0.03,Linde Colombia,2900.0,2000,5
+P3-GARR25L,GARR-25L,Garrafon PC 25 L (reposicion parque),un,0.05,Plastigar,21500.0,500,25
+P3-GARR25L,TAP-GARR,Tapa garrafon 55 mm con sello,un,1.0,Tapas La Libertad,210.0,50000,14
+P1-CC350-RGB,FILM-STRETCH,Film stretch paletizado,kg,0.00042,Smurfit Kappa,9800.0,500,7
+P2-QT1500-PET,FILM-STRETCH,Film stretch paletizado,kg,0.0012,Smurfit Kappa,9800.0,500,7
+P3-GARR25L,FILM-STRETCH,Film stretch paletizado,kg,0.005,Smurfit Kappa,9800.0,500,7

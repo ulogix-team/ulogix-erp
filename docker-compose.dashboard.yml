@@ -1,0 +1,34 @@
+# Suite Ulogix — dashboard + middleware.
+# El broker MQTT y el servidor OPC UA YA existen (stack MES):
+#   MQTT   100.123.104.31:1883
+#   OPC UA opc.tcp://100.123.104.31:62451  (puente via Node-RED, no se toca aqui)
+# Los contenedores salen a esa IP directamente; recuerda que 'localhost' dentro
+# de un contenedor NO es el host.
+services:
+  dashboard:
+    build: .
+    ports: ["8501:8501"]
+    env_file: .env
+    environment:
+      - OPENBLAS_NUM_THREADS=1
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
+    volumes:
+      - ./data:/app/data              # datos + contabilidad local persistentes
+      - ./middleware:/app/middleware  # state.db compartido con el middleware
+    restart: unless-stopped
+
+  middleware:
+    build: .
+    command: python middleware/run_middleware.py
+    env_file: .env
+    environment:
+      - OPENBLAS_NUM_THREADS=1
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
+    volumes:
+      - ./data:/app/data
+      - ./middleware:/app/middleware
+    restart: unless-stopped

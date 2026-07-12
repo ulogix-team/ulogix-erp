@@ -1,0 +1,149 @@
+{
+ "2021Q1": {
+  "refrescos": 54.2,
+  "agua": 5.3,
+  "garrafon": 3.9,
+  "otros": 4.2,
+  "total": 67.7
+ },
+ "2021Q2": {
+  "refrescos": 53.6,
+  "agua": 5.1,
+  "garrafon": 3.5,
+  "otros": 4.5,
+  "total": 66.8
+ },
+ "2021Q3": {
+  "refrescos": 59.8,
+  "agua": 7.6,
+  "garrafon": 3.9,
+  "otros": 6.0,
+  "total": 77.2
+ },
+ "2021Q4": {
+  "refrescos": 66.9,
+  "agua": 8.7,
+  "garrafon": 3.8,
+  "otros": 6.9,
+  "total": 86.2
+ },
+ "2022Q1": {
+  "refrescos": 62.1,
+  "agua": 7.7,
+  "garrafon": 3.1,
+  "otros": 7.4,
+  "total": 80.4
+ },
+ "2022Q2": {
+  "refrescos": 64.6,
+  "agua": 8.4,
+  "garrafon": 2.9,
+  "otros": 7.6,
+  "total": 83.4
+ },
+ "2022Q3": {
+  "refrescos": 61.8,
+  "agua": 8.8,
+  "garrafon": 3.2,
+  "otros": 7.1,
+  "total": 80.8
+ },
+ "2022Q4": {
+  "refrescos": 66.0,
+  "agua": 9.0,
+  "garrafon": 3.4,
+  "otros": 6.9,
+  "total": 85.4
+ },
+ "2023Q1": {
+  "refrescos": 61.4,
+  "agua": 8.8,
+  "garrafon": 3.3,
+  "otros": 7.1,
+  "total": 80.5
+ },
+ "2023Q2": {
+  "refrescos": 63.9,
+  "agua": 9.3,
+  "garrafon": 3.5,
+  "otros": 7.5,
+  "total": 84.2
+ },
+ "2023Q3": {
+  "refrescos": 68.6,
+  "agua": 11.0,
+  "garrafon": 3.7,
+  "otros": 7.7,
+  "total": 91.0
+ },
+ "2023Q4": {
+  "refrescos": 70.9,
+  "agua": 10.2,
+  "garrafon": 3.5,
+  "otros": 7.4,
+  "total": 91.9
+ },
+ "2024Q1": {
+  "refrescos": 66.0,
+  "agua": 10.6,
+  "garrafon": 4.1,
+  "otros": 7.7,
+  "total": 88.3
+ },
+ "2024Q2": {
+  "refrescos": 64.5,
+  "agua": 9.4,
+  "garrafon": 4.0,
+  "otros": 7.1,
+  "total": 85.0
+ },
+ "2024Q3": {
+  "refrescos": 66.0,
+  "agua": 10.5,
+  "garrafon": 3.9,
+  "otros": 7.1,
+  "total": 87.4
+ },
+ "2024Q4": {
+  "refrescos": 71.4,
+  "agua": 10.0,
+  "garrafon": 3.7,
+  "otros": 6.6,
+  "total": 91.6
+ },
+ "2025Q1": {
+  "refrescos": 61.7,
+  "agua": 9.8,
+  "garrafon": 3.5,
+  "otros": 6.2,
+  "total": 81.2
+ },
+ "2025Q2": {
+  "refrescos": 63.5,
+  "agua": 9.6,
+  "garrafon": 3.5,
+  "otros": 5.9,
+  "total": 82.6
+ },
+ "2025Q3": {
+  "refrescos": 68.6,
+  "agua": 10.6,
+  "garrafon": 3.8,
+  "otros": 7.0,
+  "total": 90.0
+ },
+ "2025Q4": {
+  "refrescos": 74.2,
+  "agua": 11.0,
+  "garrafon": 3.7,
+  "otros": 6.9,
+  "total": 95.7
+ },
+ "2026Q1": {
+  "refrescos": 67.4,
+  "agua": 10.6,
+  "garrafon": 3.6,
+  "otros": 6.7,
+  "total": 88.4
+ }
+}

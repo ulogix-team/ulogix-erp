@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+config/google_service_account.json
+middleware/state.db*
+data/contabilidad_local.xlsx
+.streamlit/secrets.toml

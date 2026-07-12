@@ -1,0 +1,35 @@
+{
+ "P1": {
+  "mu": 0.00276,
+  "sigma": 0.03477,
+  "KS_D": 0.1294,
+  "KS_p": 0.83,
+  "AD_A2": 0.359,
+  "AD_crit_5pct": 0.723,
+  "chi2": 3.5238,
+  "chi2_p": 0.4743,
+  "normal_aceptada": true
+ },
+ "P2": {
+  "mu": 0.00276,
+  "sigma": 0.03477,
+  "KS_D": 0.1294,
+  "KS_p": 0.83,
+  "AD_A2": 0.359,
+  "AD_crit_5pct": 0.723,
+  "chi2": 3.5238,
+  "chi2_p": 0.4743,
+  "normal_aceptada": true
+ },
+ "P3": {
+  "mu": -0.01094,
+  "sigma": 0.07034,
+  "KS_D": 0.11,
+  "KS_p": 0.9371,
+  "AD_A2": 0.5323,
+  "AD_crit_5pct": 0.723,
+  "chi2": 1.1429,
+  "chi2_p": 0.8874,
+  "normal_aceptada": true
+ }
+}
