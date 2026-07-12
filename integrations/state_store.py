@@ -9,9 +9,15 @@ Tablas:
                        tapas, ...) vinculadas a un SKU/linea con cantidad
                        objetivo, y a la orden de fabricacion (mrp.production,
                        columnas mo_id/mo_name) que consume esos insumos segun
-                       la BOM. El middleware acumula produccion real y marca
-                       'cumplida' / 'recibida_odoo' (esta ultima significa: la
-                       orden de fabricacion quedo validada en Odoo).
+                       la BOM. Protocolo UNS: **una sola orden activa por
+                       SKU a la vez** -- `orden_activa()` es siempre la fila
+                       'abierta' mas antigua; `actualizar_disponible()` la
+                       actualiza al valor ABSOLUTO de `AvailableQuantity`
+                       que reporta el MES (no un delta). El middleware marca
+                       'cumplida' / 'recibida_odoo' (esta ultima significa:
+                       la orden de fabricacion quedo validada en Odoo) y
+                       recien entonces `orden_activa()` empieza a devolver
+                       la siguiente -- ver decision #14 de CLAUDE.md.
 - venta_tracking     : ordenes de venta (sale.order) de producto terminado a
                        un cliente/distribuidor (ver data/clientes.csv),
                        vinculadas al lote de fabricacion vendido (mo_name).
@@ -167,30 +173,55 @@ def registrar_po(po_name: str, sku: str, qty_objetivo: float, linea: str = "",
              int(insumos_recibidos)))
 
 
-def acumular_produccion(sku: str, qty: float, linea: str = "") -> list[dict]:
-    """
-    Reparte `qty` producida entre las PO abiertas del SKU (FIFO por creacion).
-    Devuelve la lista de POs que quedaron 'cumplida' en esta llamada.
-    """
-    completadas: list[dict] = []
+def orden_activa(sku: str) -> dict | None:
+    """La PO 'abierta' mas antigua de ese SKU: la UNICA orden de fabricacion
+    que el ERP transmite y rastrea a la vez para ese producto (protocolo
+    UNS: una orden de manufactura activa por linea -- ver decision #14 de
+    CLAUDE.md). Solo cuando esta se completa la consulta pasa a devolver la
+    siguiente (queda excluida al dejar de estar 'abierta') -- "avanzar la
+    cola" es automatico, no requiere logica aparte."""
     with conexion() as con:
-        pos = con.execute(
+        row = con.execute(
             "SELECT * FROM po_tracking WHERE sku=? AND estado='abierta' "
-            "ORDER BY creado_ts, id", (sku,)).fetchall()
-        restante = qty
-        for po in pos:
-            if restante <= 0:
-                break
-            falta = po["qty_objetivo"] - po["qty_producida"]
-            aplicar = min(restante, falta)
-            nueva = po["qty_producida"] + aplicar
-            estado = "cumplida" if nueva >= po["qty_objetivo"] - 1e-9 else "abierta"
-            con.execute("UPDATE po_tracking SET qty_producida=?, estado=?, actualizado_ts=? "
-                        "WHERE id=?", (nueva, estado, _ahora(), po["id"]))
-            restante -= aplicar
-            if estado == "cumplida":
-                completadas.append(dict(po) | {"qty_producida": nueva, "estado": estado})
-    return completadas
+            "ORDER BY creado_ts, id LIMIT 1", (sku,)).fetchone()
+    return dict(row) if row else None
+
+
+def actualizar_disponible(sku: str, disponible: float) -> dict | None:
+    """Actualiza `qty_producida` de la ORDEN ACTIVA de ese sku al valor
+    ABSOLUTO reportado por el MES (`AvailableQuantity` del UNS -- no es un
+    delta que se va sumando). Proteccion contra ruido del broker: valores
+    que retrocedan respecto al ultimo avance se ignoran (la produccion real
+    nunca disminuye) y valores que superen el objetivo se recortan a este.
+    Devuelve la PO si quedo 'cumplida' en esta llamada (con qty_producida/
+    estado ya actualizados), o None si no hubo avance real o no hay orden
+    activa para ese sku."""
+    po = orden_activa(sku)
+    if po is None or disponible <= po["qty_producida"] + 1e-9:
+        return None
+    nueva = min(disponible, po["qty_objetivo"])
+    cumplida = nueva >= po["qty_objetivo"] - 1e-9
+    with conexion() as con:
+        con.execute("UPDATE po_tracking SET qty_producida=?, estado=?, actualizado_ts=? "
+                    "WHERE id=?",
+                    (nueva, "cumplida" if cumplida else "abierta", _ahora(), po["id"]))
+    return dict(po) | {"qty_producida": nueva, "estado": "cumplida"} if cumplida else None
+
+
+def acumular_produccion(sku: str, qty: float, linea: str = "") -> list[dict]:
+    """Compatibilidad con el contrato legado `Process/GoodCount` (delta de
+    unidades buenas, no un valor absoluto): sigue el MISMO protocolo de una
+    sola orden activa a la vez -- suma `qty` al avance ya reportado de la
+    orden activa y reusa `actualizar_disponible()`. Para instalaciones
+    nuevas usa `actualizar_disponible()` directo (el MES publica
+    `AvailableQuantity` como valor absoluto -- ver decision #14 de
+    CLAUDE.md, `GoodCount` ya no es necesario). Devuelve una lista de 0 o 1
+    PO (se mantiene lista por compatibilidad con quien la consume)."""
+    po = orden_activa(sku)
+    if po is None or qty <= 0:
+        return []
+    completada = actualizar_disponible(sku, po["qty_producida"] + qty)
+    return [completada] if completada else []
 
 
 def registrar_venta(so_name: str, sku: str, cliente: str, cantidad: float,

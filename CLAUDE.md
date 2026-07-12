@@ -205,6 +205,45 @@ nombres de servicio.
     El broker también trae `celda/status/nodered` (liveness del bridge
     Node-RED, aún sin integrar) y `Agent/*` (telemetría interna de Coreflux
     con IA, irrelevante) — no forman parte del UNS FEMSA, ignorarlos.
+14. **`AvailableQuantity` (no `Process/GoodCount`) es el camino PRINCIPAL de
+    producción; una sola orden de fabricación activa por línea a la vez.**
+    Conexión **directa** al broker (Coreflux) — no requiere Node-RED de por
+    medio para este flujo. Reparto de responsabilidades en la rama
+    `FEMSA/LineaX/ERP/*`:
+    - El **ERP** (esta suite) **publica** (retained) qué hay que producir:
+      `OrderNumber` (= nombre de la MO, ya no el de la PO — `erp_desde_po()`
+      usa `mo_name`), `OrderedQuantity`, `ScheduleStart/End`, `OrderStatus`,
+      `ReservedQuantity`. Publica **una sola orden activa por línea a la
+      vez** — la más antigua `'abierta'` de ese SKU (`state_store.
+      orden_activa()`). Solo cuando esa orden se completa publica la
+      **siguiente** de la cola — nunca dos activas a la vez en la misma
+      línea. Se reafirma cada `INTERVALO_REPUBLICAR` (15 s,
+      `mqtt_middleware.py`) para autocurarse si algo externo pisó la hoja.
+    - El **MES** (planta real o su simulación en el broker) **escribe**
+      `AvailableQuantity`: cuánto lleva producido de la orden activa, como
+      valor **ABSOLUTO** (no un delta). El ERP se **suscribe** a esa hoja
+      como dato de entrada — **nunca la publica él mismo** (evita eco/
+      carrera) — y la usa (`state_store.actualizar_disponible()`) para
+      marcar la orden `'cumplida'` → validar la MO en Odoo
+      (`completar_orden_fabricacion`, descuenta la BOM: tapas, etiquetas,
+      concentrado...) → avanzar sola a la siguiente.
+    - **Protección contra ruido** (necesaria: ver hallazgo #13 — Coreflux
+      Hub puede inyectar valores aleatorios vía su agente de IA):
+      `actualizar_disponible()` exige que el avance sea **monótono** (un
+      valor que retrocede se ignora, la producción real nunca disminuye) y
+      **recorta** cualquier valor que supere el objetivo — nunca confía en
+      el dato crudo del broker sin validar.
+    - El contrato legado `Process/GoodCount` (delta, no valor absoluto)
+      **sigue funcionando** (`state_store.acumular_produccion()`, ahora un
+      wrapper delgado sobre `actualizar_disponible()`) para pruebas locales
+      (`tools/simulador_produccion.py`, botón de prueba en *Producción
+      MQTT*) pero **ya no es necesario en producción** — no lo quites, pero
+      no lo trates como el camino principal en código o docs nuevos.
+    - Sección de pruebas dedicada: página *Pruebas → 4 · Producción (orden
+      activa)* — muestra la orden activa por línea, permite simular
+      `AvailableQuantity` localmente (sin MQTT, prueba la lógica al
+      instante) o publicarlo de verdad al broker. `tools/verificacion.py`
+      paso 16 cubre cola de 2 órdenes + ruido descendente + recorte.
 
 ## Estado actual (validado)
 

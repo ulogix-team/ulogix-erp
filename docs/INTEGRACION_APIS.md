@@ -184,8 +184,10 @@ Junto con esa PO se crea **una orden de fabricación por producto y mes**
 completarse la producción real vía UNS, **valida la orden de fabricación**
 (`button_mark_done`): Odoo descuenta los componentes de la BOM y da entrada al
 producto terminado. `integrations.state_store.po_tracking` guarda el vínculo
-PO↔MO (`mo_id`/`mo_name`) para que el middleware sepa cuál validar. Sin
-credenciales la suite opera en `dry-run` y registra todo en SQLite.
+PO↔MO (`mo_id`/`mo_name`) para que el middleware sepa cuál validar — ver
+§3 (MQTT) para el detalle de cómo `AvailableQuantity` dispara esa validación,
+solo una orden activa por línea/SKU a la vez. Sin credenciales la suite opera
+en `dry-run` y registra todo en SQLite.
 
 **Idempotencia.** `crear_orden_compra`, `crear_orden_fabricacion` y
 `crear_orden_venta` buscan primero una orden **no cancelada** con la misma
@@ -210,17 +212,18 @@ vinculada a su lote (`mo_name`) para no vender el mismo lote dos veces.
 
 ## 3 · MQTT — UNS FEMSA
 
-**Broker:** `100.123.104.31:1883` (el de tu stack). Regla de red del proyecto:
-fuera de Docker se usa la **IP LAN** (no `localhost` ni hostnames de servicios
-Docker); dentro de docker-compose sí resuelven los nombres de servicio.
+**Broker:** `100.123.104.31:1883` (el de tu stack), **conexión directa** — este
+flujo no pasa por Node-RED. Regla de red del proyecto: fuera de Docker se usa
+la **IP LAN** (no `localhost` ni hostnames de servicios Docker); dentro de
+docker-compose sí resuelven los nombres de servicio.
 
 **El árbol del UNS es tu YAML** (`config/uns_femsa.yaml`, guardado tal cual).
 El middleware:
 
 | Acción | Tópicos |
 |---|---|
-| Se suscribe | `FEMSA/+/MES/KPI/#` · `FEMSA/+/MES/Maintance/#` · `FEMSA/+/Process/#` · `FEMSA/MES/KPI/#` · `FEMSA/MES/Maintance/#` (agregado de **planta completa**, sin línea) · legado `plant/+/production` |
-| Publica (retained) | `FEMSA/LineaX/ERP/{OrderNumber, OrderStatus, ScheduleStart, ScheduleEnd, ActualStart, ActualEnd, AvailableQuantity, ReservedQuantity, OrderedQuantity}` |
+| Se suscribe | `FEMSA/+/MES/KPI/#` · `FEMSA/+/MES/Maintance/#` · `FEMSA/+/Process/#` (legado) · `FEMSA/MES/KPI/#` · `FEMSA/MES/Maintance/#` (agregado de **planta completa**, sin línea) · **`FEMSA/+/ERP/AvailableQuantity`** (entrada — la escribe el MES) |
+| Publica (retained) | `FEMSA/LineaX/ERP/{OrderNumber, OrderStatus, ScheduleStart, ScheduleEnd, ActualStart, ActualEnd, ReservedQuantity, OrderedQuantity}` — **nunca** `AvailableQuantity`, esa hoja es de solo lectura para el ERP |
 
 - **KPI**: 9 hojas por línea — `Availability, Quality, Performance, OEE, TEEP,
   DT, MTTR, MTBF, MLT` — número plano (`0.7712`) o JSON `{"value": 0.7712}` →
@@ -231,17 +234,42 @@ El middleware:
   (`FEMSA/MES/KPI/...`, sin segmento de línea) — `interpretar_topico()` las
   reconoce como `linea='PLANTA'`, mismo `kpi_uns`, misma tabla en el
   dashboard (fila `PLANTA`), sin vista aparte.
-- **Producción**: la rama `Process` está libre en el YAML; por convención el
+- **Producción — camino PRINCIPAL: `ERP/AvailableQuantity`.** El ERP publica
+  (retained) **una sola orden de fabricación activa por línea a la vez** —
+  la más antigua `'abierta'` de ese SKU (`state_store.orden_activa()`) — con
+  `OrderNumber` = nombre de la MO. El MES escribe `AvailableQuantity` como
+  **valor absoluto** (no delta) de cuánto lleva producido de esa orden; el
+  middleware nunca la publica, solo la lee (`_procesar_disponible()` →
+  `state_store.actualizar_disponible()`). Cuando iguala o supera el objetivo:
+  valida la `mrp.production` vinculada en Odoo (descuenta BOM — tapas,
+  etiquetas, concentrado — y entra el terminado), marca la orden `cumplida →
+  recibida_odoo` en SQLite, y **recién entonces** publica la siguiente orden
+  de la cola de ese SKU — nunca dos activas a la vez en la misma línea.
+  **Protección contra ruido** (necesaria: el broker real tiene un agente de
+  IA — Coreflux Hub `Agent/*` — que puede inyectar valores arbitrarios en
+  cualquier hoja, verificado): el avance debe ser monótono (valores que
+  retroceden se ignoran) y se recorta al objetivo (valores que lo superan no
+  disparan una sobreproducción fantasma). El middleware además **reafirma la
+  orden activa cada 15 s** (`INTERVALO_REPUBLICAR`, autocuración si algo
+  externo pisó la hoja `OrderNumber`/etc.).
+- **Producción — contrato LEGADO: `Process/GoodCount`** (delta, no valor
+  absoluto). La rama `Process` está libre en el YAML; por convención el
   middleware toma `GoodCount / Count / Produccion / Production / value` como
-  unidades buenas → descuenta la PO abierta de la línea (FIFO) → al completarla
-  la recibe en Odoo → **publica la rama ERP retained** (cualquier consumidor
-  nuevo — Ignition, Tecnomatix, Grafana — recibe el último estado al suscribirse).
+  unidades buenas → `state_store.acumular_produccion()` (wrapper delgado
+  sobre `actualizar_disponible()`) → mismo camino de cierre de arriba. Sigue
+  funcionando para pruebas locales rápidas, pero **ya no es necesario en
+  producción**.
 - Mapeo: `Linea1↔L1 (350 ml)` · `Linea2↔L2 (1.5 L)` · `Linea3↔L3 (garrafón)`.
+
+**Sección de pruebas dedicada:** página **Pruebas → 4 · Producción (orden
+activa)** — muestra la orden activa por línea, permite simular
+`AvailableQuantity` de forma local (llamada directa, sin MQTT, para probar la
+lógica al instante) o publicarlo de verdad al broker.
 
 **Probar en 3 comandos:**
 ```bash
 python middleware/run_middleware.py            # terminal 1
-python tools/simulador_produccion.py --n 20    # terminal 2 (KPIs+GoodCount al UNS)
+python tools/simulador_produccion.py --n 20    # terminal 2 (KPIs+GoodCount legado al UNS)
 mosquitto_sub -h 100.123.104.31 -t "FEMSA/+/ERP/#" -v   # ver la rama ERP retenida
 ```
 O todo con Docker: `docker compose -f docker-compose.dashboard.yml up -d`

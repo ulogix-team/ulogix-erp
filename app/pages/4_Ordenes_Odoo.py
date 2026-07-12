@@ -115,10 +115,13 @@ if st.button("🛒 Crear ordenes en Odoo", type="primary", disabled=not sel_refs
                + ", ".join(creadas))
     for a in avisos:
         st.warning(a)
-    st.caption("El middleware validara **cumplida → recibida_odoo** la orden de "
-               "fabricacion vinculada cuando la produccion reportada por MQTT "
-               "cubra la cantidad objetivo del lote (descuenta la BOM y da "
-               "entrada al producto terminado). Cuando ese lote quede listo, "
+    st.caption("Cada lote queda en la **cola de esa linea**: el ERP publica una "
+               "sola orden de fabricacion activa a la vez (`FEMSA/LineaX/ERP/"
+               "OrderNumber`); cuando el MES reporta `AvailableQuantity` (valor "
+               "absoluto) igual o mayor al objetivo, el middleware valida **cumplida "
+               "→ recibida_odoo** la MO vinculada (descuenta la BOM y da entrada al "
+               "producto terminado) y avanza solo a la siguiente orden de la cola. "
+               "Pruebalo en *Pruebas → 4 · Produccion*. Cuando un lote quede listo, "
                "aparece en la pagina *Ventas y Facturacion* para venderlo a un "
                "cliente.")
 

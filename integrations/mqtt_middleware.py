@@ -1,32 +1,46 @@
 """
-Middleware MQTT v4 — colgado del UNS FEMSA.
+Middleware MQTT v4 — colgado del UNS FEMSA. Conexion DIRECTA al broker
+(no requiere Node-RED de por medio para este flujo).
 
-  Ignition/Node-RED/Tecnomatix ──► MQTT (UNS FEMSA/...) ──► [MIDDLEWARE]
+  MES real o su simulacion (Coreflux) ──► MQTT (UNS FEMSA/...) ──► [MIDDLEWARE]
                                                               ├─ SQLite ERP (kpi_uns, eventos, POs)
                                                               ├─ Odoo API (valida la orden de
                                                               │  fabricacion vinculada al SKU)
-                                                              └─ publica rama ERP/ (retained)
+                                                              └─ publica rama ERP/ (retained,
+                                                                 salvo AvailableQuantity)
 
-SUSCRIPCIONES (config/uns_femsa.yaml):
-  FEMSA/+/MES/KPI/#        -> Availability, Quality, Performance, OEE, TEEP,
-                              DT, MTTR, MTBF  => tabla kpi_uns
-  FEMSA/+/MES/Maintance/#  -> MachineID, Last/NextMaintance, MaintanceStatus
-  FEMSA/+/Process/#        -> hojas de conteo (GoodCount/Count/Produccion/value)
-                              => eventos_produccion + cumplimiento de POs/MOs
-  plant/+/production       -> contrato legado v1 (compatibilidad)
+SUSCRIPCIONES (config/uns_femsa.yaml, integrations/uns.py: suscripciones()):
+  FEMSA/+/MES/KPI/#          -> 9 KPI por linea (incl. MLT) => tabla kpi_uns
+  FEMSA/+/MES/Maintance/#    -> estado de mantenimiento
+  FEMSA/MES/KPI|Maintance/#  -> agregado de PLANTA COMPLETA (linea='PLANTA')
+  FEMSA/+/ERP/AvailableQuantity -> **camino PRINCIPAL**: el MES reporta,
+                              como valor ABSOLUTO (no delta), cuanto lleva
+                              producido de la ORDEN ACTIVA de esa linea
+                              (state_store.orden_activa) => cumplimiento de
+                              POs/MOs
+  FEMSA/+/Process/#          -> contrato LEGADO (GoodCount/Count/Produccion,
+                              delta) para pruebas locales -- ya no necesario
+                              en produccion, ver decision #14 de CLAUDE.md
+  plant/+/production         -> contrato legado v1 (compatibilidad)
 
 Cada PO de insumos (concentrados, etiquetas, tapas, ...) se recibe de
 inmediato al crearse desde la pagina *Ordenes Odoo* (para fines practicos, sin
 modelar el lead time real del proveedor) y queda vinculada a una orden de
-fabricacion (mrp.production) de la BOM del sku. Cuando el conteo de
-produccion real acumulado cubre la cantidad objetivo del lote, el middleware
-valida esa orden de fabricacion (button_mark_done): Odoo descuenta los
-componentes de la BOM y da entrada al producto terminado.
+fabricacion (mrp.production) de la BOM del sku. Protocolo UNS: **una sola
+orden de fabricacion activa por linea a la vez** -- cuando `AvailableQuantity`
+alcanza el objetivo de la orden activa, el middleware valida esa orden de
+fabricacion (button_mark_done): Odoo descuenta los componentes de la BOM y
+da entrada al producto terminado; recien entonces se publica/avanza a la
+SIGUIENTE orden de la cola de ese SKU.
 
-PUBLICACION (la suite ES el ERP del UNS): al cambiar una PO o llegar
-produccion, se publica retained la rama FEMSA/LineaX/ERP/{OrderNumber,
-OrderStatus, ScheduleStart/End, ActualStart/End, Available/Reserved/
-OrderedQuantity} con la PO abierta mas antigua de la linea (FIFO).
+PUBLICACION (la suite ES el ERP del UNS): publica retained la rama
+FEMSA/LineaX/ERP/{OrderNumber (= nombre de la MO), OrderStatus,
+ScheduleStart/End, ActualStart/End, ReservedQuantity, OrderedQuantity} de la
+orden activa de cada linea -- **`AvailableQuantity` NO se publica aqui**, es
+dato de entrada del MES (ver integrations/uns.py). Se reafirma cada
+`INTERVALO_REPUBLICAR` segundos (autocuracion si el broker tiene ruido
+externo -- Coreflux Hub puede sobreescribir hojas del UNS via su agente de
+IA, verificado) y cada vez que se crea/completa una orden.
 """
 from __future__ import annotations
 
@@ -40,6 +54,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from config import settings
 from integrations import state_store, uns
 from integrations.odoo_client import OdooClient
+
+INTERVALO_REPUBLICAR = 15.0  # s -- reafirma la orden activa (autocuracion contra ruido)
 
 
 def _mapa_linea_sku() -> dict[str, str]:
@@ -58,35 +74,66 @@ class Middleware:
 
     # ------------------------------------------------------------- ERP -> UNS
     def publicar_estado_erp(self, linea: str) -> None:
+        """Publica (retained) la orden ACTIVA de esa linea -- la mas antigua
+        'abierta' de su sku (state_store.orden_activa). Si no hay ninguna
+        abierta (cola vacia), no publica nada nuevo: el ultimo estado
+        retenido queda como 'CLOSED'/'COMPLETED' de la ultima que se hizo."""
         if self._cliente is None:
             return
-        pos = [p for p in state_store.listar_pos(200)
-               if p["sku"] == self.linea_sku.get(linea)]
-        if not pos:
+        sku = self.linea_sku.get(linea)
+        if not sku:
             return
-        abiertas = [p for p in pos if p["estado"] == "abierta"]
-        po = sorted(abiertas, key=lambda p: p["creado_ts"])[0] if abiertas else pos[0]
+        po = state_store.orden_activa(sku)
+        if po is None:
+            return
         try:
             uns.publicar_erp(self._cliente, linea, uns.erp_desde_po(po))
         except Exception as e:  # noqa: BLE001
             state_store.log("uns", "publicar_erp ERROR", f"{linea}: {e}")
 
     # ------------------------------------------------------------- negocio
+    def _completar_orden(self, linea: str, sku: str, po: dict) -> None:
+        """Cierra el ciclo cuando la orden activa queda 'cumplida': valida
+        la orden de fabricacion en Odoo (descuenta la BOM -- tapas,
+        etiquetas, concentrado... -- y da entrada al terminado) y
+        publica/avanza a la SIGUIENTE orden de la cola de ese SKU (implicito:
+        `publicar_estado_erp` vuelve a consultar `orden_activa`, que ya
+        excluye la que se acaba de cerrar)."""
+        res = self.odoo.completar_orden_fabricacion(po.get("mo_id"), po.get("mo_name", ""))
+        estado = "recibida_odoo" if res.get("ok") else "error"
+        state_store.marcar_po(po["po_name"], estado,
+                              res.get("detalle", res.get("modo", "")))
+        state_store.log("middleware", f"po_{estado}",
+                        f"{po['po_name']} cubierta por produccion de {sku} "
+                        f"(MO {po.get('mo_name') or '-'})")
+        self.publicar_estado_erp(linea)
+
+    def _procesar_disponible(self, linea: str, sku: str, disponible: float,
+                             topic: str, payload) -> list[dict]:
+        """Camino PRINCIPAL: el MES reporta `AvailableQuantity` (valor
+        ABSOLUTO, no delta) de la orden activa de esa linea."""
+        state_store.registrar_evento(linea, sku, disponible, topic=topic,
+                                     payload=payload if isinstance(payload, dict)
+                                     else {"value": payload})
+        completada = state_store.actualizar_disponible(sku, disponible)
+        if completada:
+            self._completar_orden(linea, sku, completada)
+            return [completada]
+        return []
+
     def _procesar_produccion(self, linea: str, sku: str, qty: float,
                              topic: str, payload) -> list[dict]:
+        """Contrato LEGADO `Process/GoodCount` (delta de unidades buenas, no
+        valor absoluto) -- sigue funcionando para pruebas locales
+        (tools/simulador_produccion.py, boton de prueba de la pagina
+        Produccion MQTT), pero el camino principal en produccion es
+        `AvailableQuantity` (ver `_procesar_disponible`)."""
         state_store.registrar_evento(linea, sku, qty, topic=topic,
                                      payload=payload if isinstance(payload, dict)
                                      else {"value": payload})
         completadas = state_store.acumular_produccion(sku, qty, linea)
         for po in completadas:
-            res = self.odoo.completar_orden_fabricacion(po.get("mo_id"), po.get("mo_name", ""))
-            estado = "recibida_odoo" if res.get("ok") else "error"
-            state_store.marcar_po(po["po_name"], estado,
-                                  res.get("detalle", res.get("modo", "")))
-            state_store.log("middleware", f"po_{estado}",
-                            f"{po['po_name']} cubierta por produccion de {sku} "
-                            f"(MO {po.get('mo_name') or '-'})")
-        self.publicar_estado_erp(linea)
+            self._completar_orden(linea, sku, po)
         return completadas
 
     def manejar_mensaje(self, topic: str, raw: bytes | str) -> list[dict]:
@@ -94,6 +141,18 @@ class Middleware:
         info = uns.interpretar_topico(topic)
         if info is not None:
             valor = uns.valor_payload(raw)
+            if info["rama"] == "ERP" and info["hoja"] == "AvailableQuantity":
+                sku = self.linea_sku.get(info["linea"], "")
+                if not sku:
+                    return []
+                try:
+                    disponible = float(valor)
+                except (TypeError, ValueError):
+                    return []
+                if disponible < 0:
+                    return []
+                return self._procesar_disponible(info["linea"], sku,
+                                                  disponible, topic, valor)
             if info["rama"].startswith("MES"):
                 state_store.registrar_kpi(info["linea"], info["rama"],
                                           info["hoja"], valor, topic)
@@ -190,8 +249,18 @@ class Middleware:
             try:
                 cliente.connect(settings.MQTT_HOST, settings.MQTT_PORT, keepalive=30)
                 cliente.loop_start()
+                ultimo_republicar = time.time()
                 while not self._detener:
                     time.sleep(0.5)
+                    # autocuracion: reafirma la orden activa de cada linea
+                    # cada INTERVALO_REPUBLICAR s -- pisa cualquier ruido
+                    # externo que haya sobreescrito OrderNumber/etc (ver
+                    # docstring del modulo) y publica ordenes nuevas creadas
+                    # desde el dashboard sin esperar un mensaje de produccion
+                    if time.time() - ultimo_republicar >= INTERVALO_REPUBLICAR:
+                        for linea in self.linea_sku:
+                            self.publicar_estado_erp(linea)
+                        ultimo_republicar = time.time()
                 cliente.loop_stop(); cliente.disconnect()
             except Exception as e:  # noqa: BLE001
                 state_store.log("mqtt", "reconexion", str(e))

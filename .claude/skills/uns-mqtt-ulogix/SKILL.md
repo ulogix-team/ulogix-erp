@@ -39,6 +39,8 @@ Mapeo: `Linea1 ↔ L1 (350 ml)` · `Linea2 ↔ L2 (1.5 L)` · `Linea3 ↔ L3 (ga
 
 ## Qué escucha y qué publica el middleware
 
+**Conexión directa al broker — este flujo no necesita Node-RED de por medio.**
+
 **Suscribe:**
 - `FEMSA/+/MES/KPI/#` → `Availability, Quality, Performance, OEE, TEEP, DT, MTTR, MTBF, MLT`
   Payload: número plano (`0.7712`) o JSON `{"value": 0.7712}` → tabla `kpi_uns`
@@ -47,34 +49,58 @@ Mapeo: `Linea1 ↔ L1 (350 ml)` · `Linea2 ↔ L2 (1.5 L)` · `Linea3 ↔ L3 (ga
   sin segmento de línea (existe en el broker real, verificado). Mismas hojas
   que arriba; `interpretar_topico()` las etiqueta `linea='PLANTA'` — quedan en
   la misma tabla `kpi_uns`, sin lógica ni vista aparte
-- `FEMSA/+/Process/#` → conteo de producción. La rama está **libre** en el YAML;
-  por convención se leen las hojas `GoodCount / Count / Produccion / Production /
-  value` como unidades buenas
+- **`FEMSA/+/ERP/AvailableQuantity`** → camino **PRINCIPAL** de producción,
+  ver más abajo
+- `FEMSA/+/Process/#` → contrato **LEGADO** de producción (delta, no valor
+  absoluto). La rama está libre en el YAML; por convención se leen las hojas
+  `GoodCount / Count / Produccion / Production / value` como unidades buenas.
+  Sigue funcionando pero ya no es necesario en producción
 - `plant/+/production` → contrato legado v1 (compatibilidad)
 
 **Ruido del broker que NO es UNS FEMSA** (visto suscribiendo a `#` en
 Coreflux): `celda/status/nodered` (liveness del bridge Node-RED, aún sin
-integrar al UNS) y `Agent/*` (telemetría interna de Coreflux Hub con IA) —
-ignóralos, no forman parte de este contrato.
+integrar al UNS) y **`Agent/*`** (telemetría interna de Coreflux Hub con IA
+— **verificado que puede inyectar valores arbitrarios en cualquier hoja del
+UNS a pedido**, incluida `ERP/AvailableQuantity`; es la razón de ser de la
+protección contra ruido descrita abajo) — no forman parte de este contrato,
+pero a diferencia de antes **no se pueden ignorar sin más**: cualquier hoja
+que el ERP lea como entrada debe validarse, nunca confiar en el valor crudo.
 
-**Publica (retained)** la rama ERP de cada línea, para que cualquier suscriptor
-nuevo (Ignition, Tecnomatix, Grafana) reciba el último estado al conectarse:
+**Publica (retained)** la rama ERP de cada línea — **excepto
+`AvailableQuantity`, que es de solo lectura para el ERP** (la escribe el MES;
+si el ERP la publicara también se generaría una carrera/eco) — para que
+cualquier suscriptor nuevo (Ignition, Tecnomatix, Grafana) reciba el último
+estado al conectarse:
 
 ```
-FEMSA/Linea1/ERP/OrderNumber        PO-2026-0007
+FEMSA/Linea1/ERP/OrderNumber        WH/MO/00042   (nombre de la MO activa)
 FEMSA/Linea1/ERP/OrderStatus        IN_PROGRESS | COMPLETED | CLOSED
 FEMSA/Linea1/ERP/OrderedQuantity    20000
-FEMSA/Linea1/ERP/AvailableQuantity  12500   (producido)
 FEMSA/Linea1/ERP/ReservedQuantity   7500    (faltante)
 FEMSA/Linea1/ERP/ScheduleStart|ScheduleEnd|ActualStart|ActualEnd
+FEMSA/Linea1/ERP/AvailableQuantity  12500   (la ESCRIBE el MES, el ERP solo la lee)
 ```
 
-**Ciclo de cumplimiento (actualizado, ver decisión #7 de `CLAUDE.md`):** cada
-`GoodCount` descuenta la PO abierta de esa línea (FIFO) → al completarse, se
-**valida la orden de fabricación vinculada** (`mrp.production →
-button_mark_done`, no ya la recepción de la PO — esa se recibe de inmediato
-al crearse, desde la página *Órdenes Odoo*) → Odoo descuenta la BOM y da
-entrada al terminado → se republica la rama ERP con `CLOSED`.
+**Ciclo de cumplimiento (rediseñado — ver decisión #14 de `CLAUDE.md`):** el
+ERP publica **una sola orden de fabricación activa por línea/SKU a la vez**
+(`state_store.orden_activa()` — la más antigua `'abierta'`). El MES escribe
+`AvailableQuantity` como **valor absoluto** de avance; `state_store.
+actualizar_disponible()` exige que sea monótono (ignora retrocesos = ruido) y
+recorta cualquier exceso al objetivo. Al alcanzarlo: se **valida la orden de
+fabricación vinculada** (`mrp.production → button_mark_done`, no ya la
+recepción de la PO — esa se recibe de inmediato al crearse, desde la página
+*Órdenes Odoo*) → Odoo descuenta la BOM (tapas, etiquetas, concentrado) y da
+entrada al terminado → se marca `cumplida → recibida_odoo` en SQLite → **recién
+entonces** se publica la SIGUIENTE orden de la cola de ese SKU (nunca dos
+activas a la vez en la misma línea). El middleware reafirma la orden activa
+cada 15 s (`INTERVALO_REPUBLICAR`) como autocuración contra ruido externo. El
+contrato legado `Process/GoodCount` sigue el mismo camino de cierre vía
+`acumular_produccion()` (wrapper sobre `actualizar_disponible()`).
+
+**Probar esta lógica:** página *Pruebas → 4 · Producción (orden activa)* —
+simula `AvailableQuantity` local (sin MQTT) o publícalo de verdad al broker.
+`tools/verificacion.py` paso 16 cubre cola de 2 órdenes + ruido descendente +
+recorte al exceder el objetivo.
 
 ## Reglas de red (causa #1 de "no conecta")
 

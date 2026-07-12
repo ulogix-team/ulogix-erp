@@ -19,8 +19,9 @@ theme.encabezado("DIAGNOSTICO · APIS Y UNS",
                  f"{settings.MQTT_HOST}), Odoo XML-RPC y Google Sheets. "
                  "Cada prueba es inocua: usa topicos/celdas de verificacion.")
 
-tab_mqtt, tab_odoo, tab_sheets = st.tabs(
-    ["📡 1 · MQTT — UNS FEMSA", "🟣 2 · Odoo — XML-RPC", "📗 3 · Google Sheets"])
+tab_mqtt, tab_odoo, tab_sheets, tab_prod = st.tabs(
+    ["📡 1 · MQTT — UNS FEMSA", "🟣 2 · Odoo — XML-RPC", "📗 3 · Google Sheets",
+     "🏭 4 · Producción (orden activa)"])
 
 # ============================================================ 1. MQTT / UNS
 with tab_mqtt:
@@ -213,3 +214,108 @@ with tab_sheets:
             f"`{sa_email}` como **Editor** → copia el ID de la URL "
             "(`docs.google.com/spreadsheets/d/`**`ID`**`/edit`) → pegalo en `.env` "
             "como `SHEETS_SPREADSHEET_ID` y reinicia la app.")
+
+# ============================================================ 4. Produccion (orden activa)
+with tab_prod:
+    from integrations import state_store
+
+    st.caption(
+        "El ERP publica (retained) **una sola orden de fabricación activa por "
+        "línea a la vez**: `FEMSA/LineaX/ERP/OrderNumber` (= la MO), "
+        "`OrderedQuantity`, etc. El **MES** reporta el avance en "
+        "`FEMSA/LineaX/ERP/AvailableQuantity` como **valor absoluto** (no un "
+        "delta) — cuando alcanza el objetivo, el middleware valida esa MO en "
+        "Odoo (descuenta la BOM: tapas, etiquetas, concentrado...) y **avanza "
+        "solo** a la siguiente orden de la cola de ese SKU. Protección contra "
+        "ruido: valores que retroceden se ignoran, valores que superan el "
+        "objetivo se recortan a él (el broker real de Coreflux tiene un agente "
+        "de IA que puede inyectar valores aleatorios — verificado).")
+
+    st.subheader("Orden activa por línea (estado real, sin MQTT)")
+    with open(settings.DATA_DIR / "parametros_planta.json", encoding="utf-8") as _f:
+        _linea_sku = {ln: cfg["producto"] for ln, cfg in json.load(_f)["lineas"].items()}
+    filas_activas = []
+    for linea, sku in _linea_sku.items():
+        po = state_store.orden_activa(sku)
+        if po:
+            filas_activas.append({
+                "linea": linea, "sku": sku, "po_name": po["po_name"],
+                "mo_name": po.get("mo_name") or "—",
+                "qty_producida": po["qty_producida"], "qty_objetivo": po["qty_objetivo"],
+                "avance_pct": round(100 * po["qty_producida"] / max(po["qty_objetivo"], 1e-9), 1),
+                "estado": po["estado"]})
+        else:
+            filas_activas.append({"linea": linea, "sku": sku, "po_name": "— cola vacía —",
+                                  "mo_name": "—", "qty_producida": 0, "qty_objetivo": 0,
+                                  "avance_pct": 0, "estado": "—"})
+    st.dataframe(pd.DataFrame(filas_activas), width="stretch", hide_index=True)
+    st.caption("Recarga la página (o usa el botón de abajo) para refrescar tras publicar.")
+
+    st.divider()
+    st.subheader("Prueba LOCAL (sin MQTT — llama la lógica directamente)")
+    st.caption("Prueba `state_store.actualizar_disponible()` sin depender de que el "
+               "middleware esté corriendo como proceso aparte — útil para validar la "
+               "lógica de ruido/recorte/avance de cola al instante.")
+    cl1, cl2, cl3 = st.columns(3)
+    linea_local = cl1.selectbox("Línea", list(_linea_sku), key="linea_local_aq")
+    sku_local = _linea_sku[linea_local]
+    disponible_local = cl2.number_input("AvailableQuantity a simular", 0, 10_000_000, 100,
+                                        key="disp_local")
+    if cl3.button("▶ Aplicar localmente", type="primary"):
+        antes = state_store.orden_activa(sku_local)
+        completada = state_store.actualizar_disponible(sku_local, float(disponible_local))
+        despues = state_store.orden_activa(sku_local)
+        if antes is None:
+            st.warning(f"No hay ninguna orden abierta para {sku_local} — créala primero "
+                      "en *Órdenes Odoo*.")
+        elif completada:
+            st.success(f"✅ {completada['po_name']} quedó **cumplida** "
+                      f"({completada['qty_producida']:,.0f}/{completada['qty_objetivo']:,.0f}). "
+                      "En el middleware real esto dispara `completar_orden_fabricacion()` "
+                      "(Odoo) y avanza la cola.")
+            if despues:
+                st.caption(f"Siguiente orden activa: **{despues['po_name']}** "
+                          f"({despues['qty_producida']:,.0f}/{despues['qty_objetivo']:,.0f})")
+            else:
+                st.caption("Cola vacía: no queda ninguna otra orden abierta para ese SKU.")
+        elif despues and antes and despues["qty_producida"] == antes["qty_producida"]:
+            st.info(f"Sin cambio: {disponible_local:,.0f} no es mayor que el avance ya "
+                   f"registrado ({antes['qty_producida']:,.0f}) — tratado como ruido "
+                   "(la producción real nunca retrocede) y descartado.")
+        else:
+            st.info(f"Avance registrado sin completar la orden todavía: "
+                   f"{despues['qty_producida']:,.0f}/{despues['qty_objetivo']:,.0f}.")
+
+    st.divider()
+    st.subheader("Prueba REAL por MQTT (requiere el middleware corriendo aparte)")
+    st.caption("Publica de verdad en `FEMSA/LineaX/ERP/AvailableQuantity` — si "
+               "`python middleware/run_middleware.py` (o el contenedor `middleware`) "
+               "está corriendo, procesará el mensaje igual que lo haría un MES real.")
+    cm1, cm2, cm3 = st.columns(3)
+    linea_mqtt = cm1.selectbox("Línea", list(_linea_sku), key="linea_mqtt_aq")
+    disponible_mqtt = cm2.number_input("AvailableQuantity a publicar", 0, 10_000_000, 100,
+                                       key="disp_mqtt")
+    if cm3.button("📤 Publicar en MQTT", key="btn_pub_aq"):
+        try:
+            import paho.mqtt.client as mqtt
+            cl = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="ulogix-prueba-aq")
+            if settings.MQTT_USER:
+                cl.username_pw_set(settings.MQTT_USER, settings.MQTT_PASSWORD)
+            cl.connect(settings.MQTT_HOST, settings.MQTT_PORT, keepalive=10)
+            topico = f"FEMSA/{linea_mqtt}/ERP/AvailableQuantity"
+            payload = json.dumps({"value": int(disponible_mqtt), "unit": "u"})
+            info = cl.publish(topico, payload, qos=settings.MQTT_QOS, retain=True)
+            info.wait_for_publish(timeout=5)
+            cl.disconnect()
+            st.success(f"Publicado `{topico}` = {payload}. Revisa la tabla de arriba en "
+                      "unos segundos (o el log de auditoría abajo) para ver si el "
+                      "middleware lo procesó.")
+        except Exception as e:  # noqa: BLE001
+            st.error(f"No se pudo publicar en {settings.MQTT_HOST}:{settings.MQTT_PORT} — {e}")
+
+    with st.expander("Auditoría de producción (últimos eventos + log)"):
+        st.dataframe(pd.DataFrame(state_store.ultimos_eventos(30))
+                    [["ts", "linea", "sku", "qty", "topic"]] if state_store.ultimos_eventos(1)
+                    else pd.DataFrame(), width="stretch", hide_index=True)
+        st.dataframe(pd.DataFrame(state_store.ultimo_log(30)), width="stretch",
+                    hide_index=True)

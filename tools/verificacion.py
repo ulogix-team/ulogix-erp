@@ -225,9 +225,46 @@ def _rrhh():
     return f"{len(df)} empleados ({origen}) · {len(rrhh.resumen_por_rol(df))} roles"
 
 
+@paso("16. AvailableQuantity (orden activa, ruido, avance de cola)")
+def _disponible():
+    # QA de LOGICA (dry-run), no de conectividad -- misma filosofia que 7-9.
+    from config import settings
+    from integrations import state_store
+    from integrations.mqtt_middleware import Middleware
+    import json
+    previo, settings.DRY_RUN_FORZADO = settings.DRY_RUN_FORZADO, True
+    mw = Middleware()
+
+    # dos ordenes en cola para el mismo sku (simula 2 lotes creados en la
+    # pagina Ordenes Odoo): la activa siempre es la mas antigua
+    state_store.registrar_po("QA-AQ-001", "P1-CC350-RGB", qty_objetivo=100,
+                             mo_id=None, mo_name="QA-MO-001")
+    state_store.registrar_po("QA-AQ-002", "P1-CC350-RGB", qty_objetivo=50,
+                             mo_id=None, mo_name="QA-MO-002")
+    assert state_store.orden_activa("P1-CC350-RGB")["po_name"] == "QA-AQ-001"
+
+    # ruido: un valor que retrocede se ignora (no completa ni cambia nada)
+    mw.manejar_mensaje("FEMSA/Linea1/ERP/AvailableQuantity", json.dumps({"value": 40}))
+    ruido = mw.manejar_mensaje("FEMSA/Linea1/ERP/AvailableQuantity", json.dumps({"value": 10}))
+    assert ruido == []
+    assert state_store.orden_activa("P1-CC350-RGB")["qty_producida"] == 40
+
+    # avance real (>40) completa QA-AQ-001 y la cola avanza sola a QA-AQ-002
+    done = mw.manejar_mensaje("FEMSA/Linea1/ERP/AvailableQuantity",
+                              json.dumps({"value": 250}))  # excede el objetivo: se recorta
+    assert done and done[0]["po_name"] == "QA-AQ-001"
+    pos = {p["po_name"]: p for p in state_store.listar_pos()}
+    assert pos["QA-AQ-001"]["estado"] == "recibida_odoo"
+    assert pos["QA-AQ-001"]["qty_producida"] == 100  # recortado al objetivo, no 250
+    assert state_store.orden_activa("P1-CC350-RGB")["po_name"] == "QA-AQ-002"
+
+    settings.DRY_RUN_FORZADO = previo
+    return "orden activa avanza sola; ruido descendente ignorado; exceso recortado al objetivo"
+
+
 if __name__ == "__main__":
     for fn in [_datos, _forecast, _esc, _inv, _mrp, _sens, _odoo, _ventas, _mw,
-               _cont, _uns, _erp, _toee, _fin, _rrhh]:
+               _cont, _uns, _erp, _toee, _fin, _rrhh, _disponible]:
         fn()
     print("\n=== VERIFICACION ULOGIX ===")
     ok = True

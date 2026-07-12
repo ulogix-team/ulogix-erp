@@ -5,26 +5,47 @@ Reglas (mismas del YAML):
 - `_templates` se ignora (solo define anchors reutilizables).
 - Clave SIN valor (None)  -> HOJA  -> topico publicable.
 - Clave con hijos (dict)  -> RAMA  -> subcarpeta del topico.
-- `Process: {}` es una rama sin hojas definidas: la planta puede colgar ahi
-  contadores; el middleware acepta por convencion las hojas
-  Process/{GoodCount|Count|Produccion|Production} como conteo de produccion.
+- `Process: {}` es una rama sin hojas definidas: contrato LEGADO de conteo
+  de produccion (`GoodCount|Count|Produccion|Production`) -- ya no es el
+  camino principal, ver mas abajo.
 
 Topicos resultantes (ejemplos):
   FEMSA/Linea1/MES/KPI/OEE          FEMSA/Linea2/ERP/OrderStatus
-  FEMSA/Linea3/MES/Maintance/MTTR   FEMSA/Linea1/Process/GoodCount
+  FEMSA/Linea3/MES/Maintance/MTTR   FEMSA/Linea1/ERP/AvailableQuantity
   FEMSA/MES/KPI/OEE                 (agregado de PLANTA COMPLETA, sin linea)
 
-La suite actua como el ERP del UNS: PUBLICA la rama ERP (retained, para que
-cualquier consumidor nuevo reciba el ultimo estado) y SE SUSCRIBE a MES y
-Process. Mapeo de lineas: Linea1<->L1, Linea2<->L2, Linea3<->L3.
+Reparto de responsabilidades en la rama ERP (decision #14 de CLAUDE.md,
+conexion directa al broker -- no requiere Node-RED de por medio):
+- El **ERP** (esta suite) PUBLICA (retained) que hay que producir: una sola
+  orden de fabricacion ACTIVA por linea a la vez (`OrderNumber` = nombre de
+  la MO, `OrderedQuantity`, `ScheduleStart/End`, `OrderStatus`,
+  `ReservedQuantity`). Solo cuando esa orden se completa (el MES reporta
+  `AvailableQuantity >= OrderedQuantity`) el ERP publica la SIGUIENTE de la
+  cola de ese SKU -- nunca dos ordenes activas a la vez en la misma linea.
+- El **MES** (planta real o su simulacion en el broker) ESCRIBE
+  `AvailableQuantity`: cuanto lleva producido de la orden activa. El ERP se
+  SUSCRIBE a esa hoja como dato de ENTRADA (no la publica el mismo) y la usa
+  para marcar la orden 'cumplida' -> validar la orden de fabricacion en Odoo
+  (descuenta la BOM: tapas, etiquetas, concentrado...) -> avanzar a la
+  siguiente. El contrato legado `Process/GoodCount` (delta, no valor
+  absoluto) sigue funcionando para pruebas locales
+  (`tools/simulador_produccion.py`) pero ya no es necesario en produccion.
 
 `FEMSA/MES/...` (sin segmento de linea) es un agregado de PLANTA COMPLETA
 que el broker real (Coreflux) tambien publica -- verificado conectandose
 directo al broker y suscribiendo a `#`. `interpretar_topico()` lo reconoce
 como `linea='PLANTA'` (sentinela, no esta en `LINEA_DE_UNS`) para que quede
 en la misma tabla `kpi_uns` y los mismos tableros que las lineas reales, sin
-duplicar codigo. No tiene rama ERP ni Process propia (no se ha visto esa
-combinacion en el broker).
+duplicar codigo.
+
+**Ojo con el ruido del broker real**: Coreflux Hub tiene un agente de IA
+("BrokerAgent") que puede sobreescribir cualquier hoja del UNS a pedido
+(verificado: `Agent/traces` mostro la tarea "cambia el performance de la
+linea uno en el KPI a 32.08"). Los valores de `AvailableQuantity`/
+`OrderNumber`/etc. vistos alli NO tenian continuidad logica (saltaban al
+azar, subian y bajaban) -- por eso `actualizar_disponible()` en
+state_store.py exige que el avance sea MONOTONO (nunca decrece) y lo
+recorta al objetivo antes de aceptarlo como produccion real.
 """
 from __future__ import annotations
 
@@ -71,12 +92,17 @@ def hojas(arbol: dict | None = None, prefijo: str = "") -> list[str]:
 
 
 def suscripciones() -> list[str]:
-    """Lo que consume el middleware (MES + Process de todas las lineas, mas
-    el agregado MES de planta completa -- 'FEMSA/MES/...', sin comodin de
-    linea porque esa posicion es literalmente 'MES')."""
+    """Lo que consume el middleware: MES + Process de cada linea, el
+    agregado MES de planta completa ('FEMSA/MES/...', sin comodin de linea
+    porque esa posicion es literalmente 'MES'), y `ERP/AvailableQuantity`
+    -- la UNICA hoja de la rama ERP que escribe el MES (avance real de
+    produccion de la orden activa de esa linea; el resto de la rama ERP la
+    publica este ERP, no se suscribe a su propio output -- ver decision #14
+    de CLAUDE.md)."""
     r = raiz()
     return [f"{r}/+/MES/KPI/#", f"{r}/+/MES/Maintance/#", f"{r}/+/Process/#",
-            f"{r}/MES/KPI/#", f"{r}/MES/Maintance/#"]
+            f"{r}/MES/KPI/#", f"{r}/MES/Maintance/#",
+            f"{r}/+/ERP/AvailableQuantity"]
 
 
 def interpretar_topico(topic: str) -> dict | None:
@@ -112,23 +138,29 @@ def valor_payload(raw: bytes | str):
 
 
 # ------------------------------------------------------------------ ERP -> UNS
+# 'AvailableQuantity' se excluye A PROPOSITO: es dato de ENTRADA del ERP (lo
+# escribe el MES -- avance real de produccion), no de salida. Publicarlo
+# nosotros pisaria lo que reporta el MES y crearia un eco/carrera con
+# nuestra propia suscripcion a esa misma hoja. Ver decision #14 de CLAUDE.md.
 CAMPOS_ERP = ["OrderNumber", "OrderStatus", "ScheduleStart", "ScheduleEnd",
-              "ActualStart", "ActualEnd", "AvailableQuantity",
-              "ReservedQuantity", "OrderedQuantity"]
+              "ActualStart", "ActualEnd", "ReservedQuantity", "OrderedQuantity"]
 
 
 def erp_desde_po(po: dict, primer_evento_ts: str = "") -> dict:
-    """Mapea una PO rastreada (state_store.po_tracking) a la rama ERP del UNS."""
+    """Mapea la orden ACTIVA (state_store.orden_activa) a la rama ERP del
+    UNS que el ERP publica: QUE hay que producir (numero de orden de
+    fabricacion, cantidad pedida, ventana programada, estado), no CUANTO se
+    ha producido -- eso lo reporta el MES en `AvailableQuantity`, que este
+    ERP solo lee (ver `manejar_mensaje()` en mqtt_middleware.py)."""
     restante = max(0.0, po["qty_objetivo"] - po["qty_producida"])
     estado = {"abierta": "IN_PROGRESS", "cumplida": "COMPLETED",
               "recibida_odoo": "CLOSED", "error": "ERROR"}.get(po["estado"], "DRAFT")
-    return {"OrderNumber": po["po_name"], "OrderStatus": estado,
+    return {"OrderNumber": po.get("mo_name") or po["po_name"], "OrderStatus": estado,
             "ScheduleStart": po.get("creado_ts", ""),
             "ScheduleEnd": po.get("detalle", "") or "",
             "ActualStart": primer_evento_ts,
             "ActualEnd": po["actualizado_ts"] if po["estado"] in
             ("cumplida", "recibida_odoo") else "",
-            "AvailableQuantity": round(po["qty_producida"], 2),
             "ReservedQuantity": round(restante, 2),
             "OrderedQuantity": round(po["qty_objetivo"], 2)}
 

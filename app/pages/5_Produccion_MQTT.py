@@ -78,7 +78,11 @@ except Exception:  # noqa: BLE001 — fallback manual
 st.divider()
 
 # ------------------------------------------------------------------ publicador de prueba
-st.subheader("📤 Publicar reporte de prueba (directo a tu broker)")
+st.subheader("📤 Publicar reporte de prueba — contrato LEGADO (`Process/GoodCount`)")
+st.caption("El camino **principal** hoy es `AvailableQuantity` (valor absoluto que "
+          "reporta el MES) — pruébalo en *Pruebas → 4 · Producción*. Este botón sigue "
+          "el contrato legado (delta de unidades buenas), útil para pruebas locales "
+          "rápidas sin simular un MES completo.")
 c1, c2, c3 = st.columns(3)
 linea = c1.selectbox("Linea", ["L1", "L2", "L3"])
 sku_defecto = {"L1": "P1-CC350-RGB", "L2": "P2-QT1500-PET", "L3": "P3-GARR25L"}[linea]
@@ -127,27 +131,36 @@ mantenimiento existen tambien **a nivel planta**, sin segmento de linea —
 `interpretar_topico()` las reconoce como `linea='PLANTA'` y quedan en la
 misma tabla `kpi_uns` y el mismo tablero de abajo, sin vista aparte.
 
-**Conteo de produccion** — la rama `Process` esta libre en el YAML; el
-middleware toma por convencion las hojas `GoodCount / Count / Produccion /
-Production / value` como unidades buenas de la linea:
+**Produccion — camino PRINCIPAL: `ERP/AvailableQuantity` (conexion directa al
+broker, sin Node-RED de por medio).** El ERP publica (retained) una sola
+orden de fabricacion **activa por linea a la vez**; el MES reporta cuanto
+lleva producido de esa orden como valor **ABSOLUTO** (no un delta):
+```
+FEMSA/Linea1/ERP/OrderNumber        WH/MO/00042   (la MO activa, la publica el ERP)
+FEMSA/Linea1/ERP/OrderedQuantity    20000         (la publica el ERP)
+FEMSA/Linea1/ERP/AvailableQuantity  12500         (la escribe el MES — este ERP solo la lee)
+FEMSA/Linea1/ERP/ReservedQuantity   7500          (faltante, la publica el ERP)
+```
+Cuando `AvailableQuantity >= OrderedQuantity`, el middleware valida en Odoo la
+orden de fabricacion vinculada (`mrp.production`): descuenta los componentes
+de la BOM (concentrados, etiquetas, tapas, ...) — ya recibidos al crear la
+PO — y da entrada al producto terminado; **recien entonces** publica la
+SIGUIENTE orden de la cola de ese SKU (nunca dos activas a la vez en la misma
+linea). Proteccion contra ruido: valores que retroceden se ignoran, valores
+que superan el objetivo se recortan a el — el broker real (Coreflux) tiene un
+agente de IA que puede inyectar valores aleatorios en cualquier hoja del UNS
+(verificado). Pruebalo en *Pruebas → 4 · Produccion*.
+
+**Contrato LEGADO** (`Process/GoodCount`, delta de unidades buenas) — la rama
+`Process` esta libre en el YAML; el middleware acepta por convencion las
+hojas `GoodCount / Count / Produccion / Production / value`. Sigue
+funcionando (boton de prueba arriba, `tools/simulador_produccion.py`) pero ya
+no es necesario en produccion:
 ```json
 FEMSA/Linea1/Process/GoodCount
 {{"value": 9000, "requestedBy": "node-red", "timestamp": "..."}}
 ```
-Cada conteo descuenta la PO abierta de la linea (FIFO) y, al completarla,
-valida en Odoo la orden de fabricacion (mrp.production) vinculada: descuenta
-los componentes de la BOM (concentrados, etiquetas, tapas, ...) — ya recibidos
-al crear la PO — y da entrada al producto terminado.
 
-**Publicacion del ERP (esta suite) — retained**, para que cualquier
-suscriptor nuevo reciba el ultimo estado:
-```
-FEMSA/Linea1/ERP/OrderNumber       PO-2026-0007
-FEMSA/Linea1/ERP/OrderStatus       IN_PROGRESS | COMPLETED | CLOSED
-FEMSA/Linea1/ERP/OrderedQuantity   20000
-FEMSA/Linea1/ERP/AvailableQuantity 12500      (producido)
-FEMSA/Linea1/ERP/ReservedQuantity  7500       (faltante)
-```
 Mapeo de lineas: `Linea1↔L1 (350 ml)`, `Linea2↔L2 (1.5 L)`, `Linea3↔L3 (garrafon)`.
 """)
 
