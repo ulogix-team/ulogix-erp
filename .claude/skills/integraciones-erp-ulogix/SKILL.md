@@ -11,8 +11,8 @@ description: Trabajar con las integraciones externas del proyecto Ulogix — Odo
 (`execute_kw` sobre cualquier modelo). La **API key funciona como contraseña**;
 el usuario sigue siendo el correo de login.
 
-`.env`: `ODOO_URL=https://ulogix-admin.odoo.com` · `ODOO_DB=ulogix-admin` ·
-`ODOO_USER=ulogixteam@gmail.com` · `ODOO_API_KEY=...`
+`.env`: `ODOO_URL`/`ODOO_DB`/`ODOO_USER`/`ODOO_API_KEY` — valores reales solo
+en `.env` local, nunca en archivos versionados (ver `.env.example`).
 
 ### Firma que la gente equivoca
 
@@ -97,11 +97,11 @@ requiere una instancia real.
 
 ## Google Sheets (cuenta de servicio)
 
-No usa cuenta personal: usa una *service account*
-(`ulogix-sheets-admin@ulogix-femsa.iam.gserviceaccount.com`), cuyo JSON está en
-`config/google_service_account.json`. gspread firma un JWT con esa llave y opera
-el libro como un editor más → **el único requisito es compartir el libro con ese
-correo como Editor**.
+No usa cuenta personal: usa una *service account* de Google Cloud, cuyo JSON
+está en `config/google_service_account.json` (`client_email` ahí dentro, no
+versionado). gspread firma un JWT con esa llave y opera el libro como un
+editor más → **el único requisito es compartir el libro con ese correo como
+Editor**.
 
 ### Contrato de escritura (crítico)
 

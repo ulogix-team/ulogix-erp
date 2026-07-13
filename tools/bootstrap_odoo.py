@@ -1,5 +1,5 @@
 """
-Bootstrap de Odoo (ulogix-admin.odoo.com) — configura la instancia DESDE CERO
+Bootstrap de Odoo — configura la instancia DESDE CERO
 via XML-RPC usando las credenciales del .env:
 
   1. Instala (si faltan) las apps: Compras (purchase), Inventario (stock),
@@ -50,9 +50,9 @@ class Bootstrap:
         if not self.uid:
             raise SystemExit(
                 "Autenticacion fallida. Verifica en .env: ODOO_USER debe ser el "
-                "CORREO con el que inicias sesion en ulogix-admin.odoo.com y "
+                "CORREO con el que inicias sesion en tu instancia Odoo y "
                 "ODOO_API_KEY la clave generada en Ajustes > Seguridad de la cuenta. "
-                "Si el nombre de la base no es 'ulogix-admin', ajusta ODOO_DB "
+                "Si el nombre de la base no coincide, ajusta ODOO_DB "
                 "(en odoo.com suele ser el subdominio).")
         self.mod = xmlrpc.client.ServerProxy(f"{settings.ODOO_URL}/xmlrpc/2/object")
         print(f"[ok] autenticado uid={self.uid} en {settings.ODOO_URL} "

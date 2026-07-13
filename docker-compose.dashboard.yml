@@ -1,7 +1,6 @@
 # Suite Ulogix — dashboard + middleware.
-# El broker MQTT y el servidor OPC UA YA existen (stack MES):
-#   MQTT   100.123.104.31:1883
-#   OPC UA opc.tcp://100.123.104.31:62451  (puente via Node-RED, no se toca aqui)
+# El broker MQTT y el servidor OPC UA YA existen (stack MES) — IPs reales
+# solo en tu .env local (MQTT_HOST / OPCUA_ENDPOINT), nunca aqui.
 # Los contenedores salen a esa IP directamente; recuerda que 'localhost' dentro
 # de un contenedor NO es el host.
 services:

@@ -14,10 +14,10 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from config import settings
 from core.finanzas_negocio import indicadores
 from core.forecast import pronostico_base
 from core.rrhh import resumen_por_rol
+from integrations.rrhh_client import leer_empleados
 from core.tiempos_oee import LINEAS, tabla_capacidad, tabla_oee
 from integrations.sheets_client import Contabilidad
 
@@ -39,14 +39,20 @@ def construir_filas() -> tuple[list[list], list[int]]:
     ind = indicadores(r.mensual, "Base")
     tcap = tabla_capacidad(r.mensual)
     toee = tabla_oee()
-    import pandas as pd
-    df_emp = pd.read_csv(settings.DATA_DIR / "empleados.csv")
+    df_emp, origen_rrhh = leer_empleados()  # hoja RRHH en vivo (fallback CSV solo si Sheets cae)
     resumen = resumen_por_rol(df_emp)
 
     filas = [
         _f("DASHBOARD — RESUMEN EJECUTIVO ULOGIX × FEMSA/INDEGA FONTIBÓN"),
-        _f("Snapshot recalculado desde el motor local (escenario Base) — para el "
-          "detalle vivo por escenario, ver las páginas del dashboard Streamlit "
+        _f("Snapshot recalculado al publicar (demanda/capacidad: motor Python — Monte "
+          "Carlo/Holt-Winters, no reproducible como fórmula de Sheets; RRHH: leído en vivo "
+          f"de la hoja RRHH, origen '{origen_rrhh}'). El caso de negocio de este bloque usa "
+          "el motor canónico `core.finanzas_negocio` (el mismo que valida `tools/"
+          "verificacion.py` y muestra la página Finanzas) — es un modelo PARALELO y más "
+          "completo (D&A/impuestos/capital de trabajo explícitos) que las fórmulas nativas "
+          "de `Sensibilidad`/`Flujo_Caja`/`ER_Proyecto` (modelo simplificado tipo seed); "
+          "ambos convergen hoy pero son cálculos distintos a propósito — no se combinan. "
+          "Para el detalle vivo por escenario, ver las páginas del dashboard Streamlit "
           "(Escenarios, Inventario, Finanzas, RRHH)."),
         _f(""),
     ]

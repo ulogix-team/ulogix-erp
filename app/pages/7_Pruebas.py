@@ -101,7 +101,8 @@ with tab_odoo:
                f"`{settings.ODOO_DB or '—'}` · usuario: `{settings.ODOO_USER or '—'}`")
     if settings.ODOO_USER in ("", "TU_CORREO_DE_LOGIN_ODOO"):
         st.warning("Falta **ODOO_USER** en `.env`: debe ser el correo con el que "
-                   "inicias sesion en ulogix-admin.odoo.com (la API key ya esta).")
+                   f"inicias sesion en `{settings.ODOO_URL or 'tu instancia Odoo'}` "
+                   "(la API key ya esta).")
     c1, c2 = st.columns(2)
     with c1:
         if st.button("▶ Probar conexion (authenticate + version)"):

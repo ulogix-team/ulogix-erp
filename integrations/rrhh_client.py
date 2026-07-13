@@ -218,13 +218,18 @@ def construir_filas_rrhh(df: pd.DataFrame) -> list[list]:
 
     filas.append(f(MARCA_RECON))
     filas.append(f("fase", "roster_cop", "resumen_cop", "diferencia_cop", "estado"))
-    costo_fase = df[df["estado"] == "activo"].groupby("fase")["salario_mensual_cop"].sum()
-    for fase in ["Operacion", "Implementacion"]:
-        roster_val = costo_fase.get(fase, 0.0)
-        resumen_val = resumen[resumen["fase"] == fase]["costo_total_mes_cop"].sum()
-        diff = roster_val - resumen_val
-        filas.append(f(fase, round(roster_val), round(resumen_val), round(diff),
-                       "✅ cuadra" if abs(diff) < 1 else "⚠️ difiere"))
+    # primera fila de datos de este bloque -- se toma del largo real de
+    # `filas` ya construidas (robusto a que el bloque TASAS cambie de tamano)
+    fila_recon_inicio = len(filas) + 1
+    col_fase_roster = "G"  # ROSTER: fase
+    rango_fase_roster = f"${col_fase_roster}${fila_roster_inicio}:${col_fase_roster}${fila_roster_fin}"
+    for i, fase in enumerate(["Operacion", "Implementacion"]):
+        fila_actual = fila_recon_inicio + i
+        f_roster = f'=SUMIFS({rango_salario};{rango_fase_roster};A{fila_actual};{rango_estado};"activo")'
+        f_resumen = f'=SUMIF({rango_fase_resumen};A{fila_actual};{rango_costo_resumen})'
+        f_diff = f"=B{fila_actual}-C{fila_actual}"
+        f_estado = f'=IF(ABS(D{fila_actual})<1;"✅ cuadra";"⚠️ difiere")'
+        filas.append(f(fase, f_roster, f_resumen, f_diff, f_estado))
 
     return filas
 

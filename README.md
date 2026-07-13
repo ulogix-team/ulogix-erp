@@ -29,7 +29,7 @@ trazabilidad MES/Cloud.
                                        │
                                        ▼
                     DASHBOARD Streamlit ◄──► Google Sheets (libro en Drive)
-                    8 páginas                Modelo_FEMSA_Ulogix_2026 (repo aparte)
+                    10 páginas               Modelo_FEMSA_Ulogix_2026 (repo aparte)
 ```
 
 Regla de red del stack: fuera de Docker, conectarse por la **IP LAN del host**
@@ -47,12 +47,14 @@ Sin Docker: `pip install -r requirements.txt` →
 
 ## Configuración (`.env`)
 
-Ya trae el broker (`100.123.104.31`), la credencial de Google
-(`config/google_service_account.json`) y la API key de Odoo. Pendientes tuyos:
+Copia `.env.example` a `.env` y completa `MQTT_HOST`, `ODOO_URL`/`ODOO_DB`/
+`ODOO_USER`/`ODOO_API_KEY` y `SHEETS_SPREADSHEET_ID` con tus valores reales —
+**nunca** los pegues en archivos versionados (repo público). La credencial de
+Google (`config/google_service_account.json`) tampoco se versiona.
 
 | Variable | Qué poner |
 |---|---|
-| `ODOO_USER` | tu **correo de login** en ulogix-admin.odoo.com |
+| `ODOO_USER` | tu **correo de login** en tu instancia Odoo |
 | `SHEETS_SPREADSHEET_ID` | el ID del libro una vez subido a Drive y compartido |
 
 Guía completa paso a paso: **`docs/INTEGRACION_APIS.md`**.
@@ -72,13 +74,18 @@ Guía completa paso a paso: **`docs/INTEGRACION_APIS.md`**.
 5. **Producción (UNS)** — estado vivo del middleware, KPIs MES por línea,
    publicador de prueba y contrato completo del UNS.
 6. **Finanzas** — P&L del libro de producción + **caso de negocio conectado
-   a la demanda** (base vs escenario activo): CAPEX $12.188M COP · EBITDA
-   incremental $13.182M (12 m op.) · **VPN $16.661M · TIR 85,7% E.A. · ROI
-   253,1% · payback 21/24 m** + sincronización al libro de Drive.
+   a la demanda** (base vs escenario activo, sin supuesto de crecimiento —
+   sigue siempre la demanda que manda el ERP): CAPEX $12.188M COP · EBITDA
+   incremental ~$13.119M (12 m op.) · **VPN $15.935M · TIR 83,8% E.A. · ROI
+   242,8% · payback 21/24 m** + sincronización al libro de Drive.
 7. **Pruebas** — diagnóstico en vivo: eco MQTT al UNS, Odoo
    (authenticate + PO de prueba), Sheets (escribir/releer + leer Parámetros).
-8. **Base de datos** — navegador de las 7 tablas ERP con exportación CSV y
+8. **Base de datos** — navegador de las 10 tablas ERP con exportación CSV y
    tablero de KPIs del UNS.
+9. **Ventas y Facturación** — reparte lotes terminados entre clientes, crea
+   `sale.order`, entrega y factura en Odoo.
+10. **RRHH** — roster individual (hoja `RRHH`), reconciliado contra el
+    agregado por rol que gobierna la nómina del caso de negocio.
 
 ## UNS
 
@@ -100,9 +107,10 @@ python tools/bootstrap_odoo.py         # apps + P1/P2/P3 con EAN-13 + 16 compone
 ## Verificación
 
 ```bash
-python tools/verificacion.py   # 13 pasos: datos, modelos, MRP, Odoo, MQTT,
+python tools/verificacion.py   # 17 pasos: datos, modelos, MRP, Odoo, MQTT,
                                # Sheets, UNS, ERP, Tiempos/OEE (auditados:
-                               # U>1 con 2 turnos -> 3er turno), ROI/VPN/TIR
+                               # U>1 con 2 turnos -> 3er turno), ROI/VPN/TIR,
+                               # produccion (orden activa), inventario en vivo
 ```
 
 ## Repositorio hermano

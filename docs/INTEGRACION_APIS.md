@@ -9,17 +9,17 @@ Docker las monta con `env_file` y volúmenes.
 ## 1 · Google Sheets (cuenta de servicio)
 
 **Cómo funciona.** La app no usa tu cuenta personal: usa una *service account*
-(`ulogix-sheets-admin@ulogix-femsa.iam.gserviceaccount.com`) cuyo JSON de
-credenciales ya está en `config/google_service_account.json`. gspread firma un
-JWT con esa llave privada contra `oauth2.googleapis.com` y opera el libro como
-un editor más. Por eso el único requisito es **compartir el libro con ese
-correo**.
+de Google Cloud cuyo JSON de credenciales ya está en
+`config/google_service_account.json` (el `client_email` está dentro de ese
+JSON, no versionado). gspread firma un JWT con esa llave privada contra
+`oauth2.googleapis.com` y opera el libro como un editor más. Por eso el único
+requisito es **compartir el libro con ese correo**.
 
 **Pasos (una sola vez):**
 1. Sube `Modelo_FEMSA_Ulogix_2026.xlsx` (repo `femsa-modelo-financiero/salida/`)
    a Google Drive y ábrelo → *Archivo → Guardar como hoja de cálculo de Google*.
-2. Botón **Compartir** → agrega como **Editor**:
-   `ulogix-sheets-admin@ulogix-femsa.iam.gserviceaccount.com`
+2. Botón **Compartir** → agrega como **Editor** el `client_email` de
+   `config/google_service_account.json`
 3. Copia el **ID** del libro de la URL:
    `https://docs.google.com/spreadsheets/d/`**`<ID>`**`/edit`
 4. En `.env`: `SHEETS_SPREADSHEET_ID=<ID>` → reinicia
@@ -45,6 +45,7 @@ Sheets** de la página Finanzas para forzarlo al instante):
 | Financiero | `Licencias` (`CAPEX software capitalizable`, `OPEX mensual licencias` — última celda no vacía de la fila) | **Sheets → ERP** | `leer_licencias()` | filas etiquetadas, sin columna fija |
 | RRHH | `RRHH` (roster + resumen por rol + tasas, consolidada — ver `integrations/rrhh_client.py`) | ERP → Sheets *(alta)* / **Sheets → ERP** *(lectura)* | `leer_empleados()` / `publicar_empleados()` / `agregar_empleado()` | reconstrucción completa (el resumen se deriva del roster), sin fórmulas dependientes |
 | Financiero | `APU_Ingenieria` (costos de ingeniería que cobra ULogix, justificados por AIU) | ERP → Sheets | `tools/publicar_apu_ingenieria.py` (escribe) / `leer_apu_ingenieria()` (lee, solo exhibición) | reemplazo, sin fórmulas dependientes |
+| Financiero | `Analisis_Paletizado` (caso de inversión paralelo: paletizado+encajonado antes/ULogix/comercial) | ERP → Sheets | `tools/publicar_analisis_paletizado.py` — solo exhibición, no alimenta `CAPEX_FILAS` ni el caso de negocio principal | reemplazo, sin fórmulas dependientes |
 
 **Formato numérico del libro real: colombiano, no inglés.** Punto = separador
 de miles, coma = separador decimal (`"3.850"` = 3850, `"18,00%"` = 0.18,
@@ -65,7 +66,6 @@ distinguir mayúsculas/minúsculas):
 | `factor_rfq_benchmark` | `FACTOR_RFQ` |
 | `tmar_anual` | `TMAR_ANUAL` |
 | `tasa_renta` | `TASA_RENTA` |
-| `crecimiento_demanda` | `CRECIMIENTO_DEMANDA_ANUAL` |
 | `uplift_throughput` | `UPLIFT_THROUGHPUT` |
 | `factor_monetizacion` | `FACTOR_MONETIZACION` |
 | `rampa_mes5` | `RAMPA_MES5` |
@@ -88,6 +88,15 @@ hoja **no** gobierna el maestro físico que usa Odoo/MRP
 (`data/maestro_productos.csv` vía `core/forecast.cargar_maestro()`) — solo
 las unit economics del caso de negocio de `core/finanzas_negocio.py`; ver
 decisión de diseño #3 en `CLAUDE.md`.
+
+**`crecimiento_demanda` ya no se lee** (decisión #20, 2026-07): el motor
+Python eliminó por completo el parámetro `CRECIMIENTO_DEMANDA_ANUAL` — la
+evaluación financiera sigue siempre la demanda que manda el ERP (pronóstico
+o escenario activo), sin inflarla con una tasa de crecimiento aparte. La
+fila queda en `Parametros!B10 = 0%` (conservada para auditoría, mismo
+patrón que el CAPEX en cantidad=0). El motor nativo de Sheets (`ER_Proyecto`/
+`FinancieroEscenario`) sigue teniendo la fórmula `(1+Parametros!$B$10)^N` en
+~900 celdas — queda neutralizada porque B10=0, no porque se haya borrado.
 
 **Contrato de la hoja `CAPEX`**: `leer_capex()` busca la fila de encabezado
 por **nombre de columna** (no por posición exacta) — reconoce variantes como
@@ -149,16 +158,17 @@ con el `client_email` nuevo. Habilitar las APIs *Google Sheets API* y
 `/xmlrpc/2/object` (`execute_kw` sobre cualquier modelo). La API key
 funciona como **contraseña** del usuario; el login sigue siendo tu correo.
 
-**`.env` (ya cargado):**
+**`.env` (formato — los valores reales viven SOLO en tu `.env` local, nunca
+en archivos versionados; ver `.env.example`):**
 ```
-ODOO_URL=https://ulogix-admin.odoo.com
-ODOO_DB=ulogix-admin              # en odoo.com la BD se llama como el subdominio
-ODOO_USER=TU_CORREO_DE_LOGIN_ODOO # ← ÚNICO dato pendiente: tu correo de login
-ODOO_API_KEY=36793ebc3101d9c6edf4d3b4100af97c85f7e58c
+ODOO_URL=https://tu-instancia.odoo.com
+ODOO_DB=tu-base-de-datos          # en odoo.com la BD se llama como el subdominio
+ODOO_USER=tu-correo-de-login-odoo
+ODOO_API_KEY=tu-api-key           # NUNCA pegar la key real aqui — repo publico
 ```
 > Si la autenticación falla con usuario/clave correctos, confirma el nombre real
-> de la BD: entra a `https://ulogix-admin.odoo.com/web/database/selector` o
-> mira `web.base.url` en Ajustes técnicos.
+> de la BD: entra a `<ODOO_URL>/web/database/selector` o mira `web.base.url`
+> en Ajustes técnicos.
 
 **Poblar Odoo desde cero** (tu instancia solo tiene las apps; ni productos ni
 BOM). El script es idempotente:
@@ -235,7 +245,7 @@ vinculada a su lote (`mo_name`) para no vender el mismo lote dos veces.
 
 ## 3 · MQTT — UNS FEMSA
 
-**Broker:** `100.123.104.31:1883` (el de tu stack), **conexión directa** — este
+**Broker:** el de tu stack (`MQTT_HOST` en `.env`), **conexión directa** — este
 flujo no pasa por Node-RED. Regla de red del proyecto: fuera de Docker se usa
 la **IP LAN** (no `localhost` ni hostnames de servicios Docker); dentro de
 docker-compose sí resuelven los nombres de servicio.
@@ -293,7 +303,7 @@ lógica al instante) o publicarlo de verdad al broker.
 ```bash
 python middleware/run_middleware.py            # terminal 1
 python tools/simulador_produccion.py --n 20    # terminal 2 (KPIs+GoodCount legado al UNS)
-mosquitto_sub -h 100.123.104.31 -t "FEMSA/+/ERP/#" -v   # ver la rama ERP retenida
+mosquitto_sub -h $MQTT_HOST -t "FEMSA/+/ERP/#" -v   # ver la rama ERP retenida
 ```
 O todo con Docker: `docker compose -f docker-compose.dashboard.yml up -d`
 (servicios `dashboard` + `middleware`, con `data/` y `middleware/` como

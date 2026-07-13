@@ -49,7 +49,7 @@ MQTT_QOS = int(_get("MQTT_QOS", "1") or 1)
 
 # Referencia del stack (Node-RED/Tecnomatix se conectan a OPC UA; este
 # middleware solo habla MQTT — el puente OPC-UA->MQTT ya existe en Node-RED).
-OPCUA_ENDPOINT = _get("OPCUA_ENDPOINT", "opc.tcp://100.123.104.31:62451")
+OPCUA_ENDPOINT = _get("OPCUA_ENDPOINT", "opc.tcp://tu-ip-o-host:62451")
 
 # ------------------------------------------------------------------ Google Sheets (contabilidad)
 # Cuenta de servicio (JSON). Compartir el spreadsheet con el client_email del JSON.

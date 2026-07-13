@@ -76,12 +76,21 @@ nuevo si ha pasado tiempo).
 |---|---|
 | CAPEX total | ~$12.188 M COP (recortado 2026-07, decisión #15: sin lavadoras ni inspección de línea, celdas robóticas a detalle de BOM real) |
 | D&A mensual | ~$123.5 M |
-| EBITDA incremental 12 m operativos | ~$13.182 M |
-| VPN @ TMAR 18 % E.A. | ~$16.661 M |
-| TIR | ~85.7 % E.A. |
-| ROI 60 m | ~253.1 % |
+| EBITDA incremental 12 m operativos | ~$13.119 M |
+| VPN @ TMAR 18 % E.A. | ~$15.935 M |
+| TIR | ~83.8 % E.A. |
+| ROI 60 m | ~242.8 % |
 | Payback | 21 m simple / 24 m descontado |
-| Sensibilidad VPN | $12.463 M (Cons.) — $20.478 M (Opt.) |
+| Sensibilidad VPN | $7.134 M (Cons.) — $14.046 M (Opt.) |
+
+Nota 2026-07 (decisión #20): estos valores ya NO incluyen ningún supuesto de
+crecimiento de demanda interanual — el horizonte de 60 meses repite el
+patrón de 12 meses del pronóstico/escenario del ERP tal cual, sin inflarlo.
+Pedido explícito del dueño del proyecto. El motor nativo de Sheets
+(`Sensibilidad`, `ER_Proyecto`) da una cifra más baja (~$10.8 M en el
+escenario Base) que el motor Python — es la brecha esperada entre los dos
+modelos paralelos (ver más abajo), que se hizo algo más visible al quitar
+el crecimiento de los dos.
 
 ## El libro Excel (seed original de 23 hojas + `RRHH`/`APU_Ingenieria`/`Dashboard` agregadas por el ERP; `Personal`/`Empleados`/`OEE_TEEP` ya no existen, consolidadas 2026-07 — ver decisión #17 de CLAUDE.md)
 
@@ -140,13 +149,27 @@ también funcionan directo, por si el libro cambia a futuro):
 | `trm_cop_usd` | `TRM` |
 | `factor_rfq_benchmark` | `FACTOR_RFQ` |
 | `tmar_anual`, `tasa_renta` | `TMAR_ANUAL`, `TASA_RENTA` (mismo nombre, min/mayúsc.) |
-| `crecimiento_demanda` | `CRECIMIENTO_DEMANDA_ANUAL` |
 | `uplift_throughput`, `factor_monetizacion`, `rampa_mes5`, `scrap_pp`, `mant_evitado_mes`, `wc_pct_ingreso` | ídem en mayúsculas |
 | `nomina_operacion_mes`, `nomina_implementacion_mes` | ídem en mayúsculas |
 | `otros_fijos_base_mes`, `otros_fijos_proyecto_mes` | ídem en mayúsculas |
 | `contingencia_capex` | `CONTINGENCIA` |
 | `fase_capex_1` .. `fase_capex_4` (4 filas separadas) | `FASES_CAPEX` (se combinan solas) |
 | `precio_p1_330ml`/`precio_p2_pet15`/`precio_p3_garrafon` | `precio_venta_cop_<SKU>` |
+
+`crecimiento_demanda` (fila `Parametros!B10`) **ya NO se lee** (decisión #20
+de CLAUDE.md, 2026-07): el motor eliminó por completo el parámetro
+`CRECIMIENTO_DEMANDA_ANUAL` — la evaluación financiera sigue siempre la
+demanda que manda el ERP (pronóstico/escenario), sin inflarla con una tasa
+de crecimiento aparte. La fila de Sheets se conserva en 0% con una nota
+(mismo patrón que el CAPEX en cantidad=0) por si hace falta auditar qué
+existía antes; escribir un valor ahí ya no tiene ningún efecto en el motor
+Python. **Ojo**: la hoja `ER_Proyecto`/`FinancieroEscenario` (motor nativo
+de Sheets) SÍ sigue teniendo la fórmula `(1+Parametros!$B$10)^N` en ~900
+celdas — quedó neutralizada porque B10=0, no porque se haya borrado la
+fórmula; si algún día hace falta reintroducir crecimiento, cambiar B10 lo
+reactivaría en el motor de Sheets pero NO en el motor Python (que ya no
+tiene ese parámetro en absoluto) — hay que decidir a propósito si se quiere
+eso.
 
 `VIDA_*` y `costo_material_cop_<SKU>` **no existen hoy en el libro real** —
 si hace falta gobernarlos desde Sheets, agrégalos con esos nombres canónicos

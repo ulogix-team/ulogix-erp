@@ -117,10 +117,11 @@ nombres de servicio.
    por nombre de columna (`activo / paquete`, `vida (años)`, con una columna
    extra `CAPEX COP` ya calculada que se ignora), y `leer_licencias()` lee
    los dos totales de esa hoja. Verificado end-to-end tras el recorte de
-   alcance de la decisión #15: 84 filas de CAPEX real leídas correctamente
-   (antes 25 — sin lavadoras ni inspección de línea, celdas robóticas a
-   detalle de BOM real), VPN $16.661 M / TIR 85.7 % / ROI 253.1 % / payback
-   21 m con datos en vivo.
+   alcance de la decisión #15 y quitar el crecimiento de demanda (decisión
+   #20): 84 filas de CAPEX real leídas correctamente (antes 25 — sin
+   lavadoras ni inspección de línea, celdas robóticas a detalle de BOM
+   real), VPN $15.935 M / TIR 83.8 % / ROI 242.8 % / payback 21 m con datos
+   en vivo.
 4. **`t_ciclo_ideal` ≠ `t_ciclo`** y **takt ≠ tiempo de ciclo**. Errores
    conceptuales ya corregidos; no reintroducirlos.
 5. **Hilos BLAS en 1** (`OPENBLAS_NUM_THREADS=1` etc. en Dockerfile y compose):
@@ -438,6 +439,184 @@ nombres de servicio.
       `Sensibilidad`, Nómina Operación $85.915.382/Implementación
       $87.161.760) — el arreglo no cambió ninguna cifra de negocio, solo
       las hizo recalcularse solas en vez de quedar pegadas por un script.
+19. **2026-07: auditoría completa de las 23 hojas — "datos sueltos" vs.
+    fórmula viva vs. dato legítimamente crudo/del ERP.** Pedido explícito
+    del dueño del proyecto: "necesito que todos los datos que se calcularon
+    no estén escritos sino tengan su fórmula y estén vinculados... revisa
+    todas las hojas". Metodología: para cada hoja, se comparó cada celda
+    numérica contra su fórmula (`value_render_option=FORMULA` vs
+    `FORMATTED_VALUE`) y se barrió el libro completo buscando
+    `#VALUE!/#REF!/#N/A/#DIV/0!/#ERROR!/#NAME?/#NUM!/#NULL!`.
+    - **Resultado**: `Reportes`/`Modelo_Negocio` ya estaban 100% fórmula.
+      `ER_Proyecto`/`Flujo_Caja`/`Balance`/`FinancieroEscenario` solo tenían
+      literales en la fila de índice de mes (1-60, un rótulo, no un cálculo
+      — correcto tal cual). `Sensibilidad` (factores de escenario),
+      `Costos_Lote` (costos de insumo por lote) y `Dep_Amort` (vidas útiles
+      en años) solo tenían literales en columnas de **entrada editable**
+      (igual que `cantidad`/`costo_unitario` en `CAPEX` o `Parametros`) — no
+      son cálculos, son las palancas que el usuario edita a mano, correcto
+      dejarlas así. `Costos_Lote!Total lote`/`COSTO UNITARIO` ya eran
+      `SUM`/división en vivo. **No había ningún cálculo real pegado como
+      valor estático fuera de lo ya arreglado en la decisión #18.**
+    - **2 bugs más del mismo patrón, encontrados por el barrido de
+      errores**: `Tiempos` tenía 3 `#ERROR!` (la columna `justificacion` del
+      bloque de mejora de OEE empieza con texto tipo `"+1.93pp A: ..."` —
+      Sheets interpreta un valor que arranca con `+` como inicio de fórmula,
+      convención heredada de Lotus 1-2-3, y revienta). Corregido:
+      `tools/actualizar_tiempos_oee.py` pasó de `value_input_option=
+      "USER_ENTERED"` a `"RAW"` (toda la hoja es texto/número documental
+      estático, nunca fue pensada como fórmula viva — decisión #1/#17).
+    - **`RRHH`: la sección RECONCILIACIÓN pasó de snapshot de Python a
+      fórmulas vivas** (`SUMIFS` sobre el ROSTER + `SUMIF` sobre el RESUMEN,
+      independientes entre sí, para que la reconciliación sea un chequeo
+      real y no una tautología calculada dos veces en Python).
+    - **`Dashboard`: leía el roster del CSV local (`data/empleados.csv`) en
+      vez de la hoja `RRHH` en vivo** — bug real de desconexión, corregido
+      para usar `integrations.rrhh_client.leer_empleados()` (hoja RRHH con
+      fallback a CSV, como todo el resto del ERP). Se documentó
+      explícitamente en la propia hoja que el bloque "Caso de negocio" del
+      Dashboard usa el motor canónico `core.finanzas_negocio` (el mismo que
+      valida `tools/verificacion.py` y la página *Finanzas*) — un modelo
+      **paralelo y más completo** (D&A/impuestos/capital de trabajo
+      explícitos) que las fórmulas nativas de `Sensibilidad`/`Flujo_Caja`/
+      `ER_Proyecto` (modelo simplificado tipo seed original). Ambos
+      convergen hoy en el mismo número pero son cálculos distintos **a
+      propósito** — no se combinan/enlazan entre sí para no dar la falsa
+      impresión de que es un solo cálculo.
+    - **Qué se dejó correctamente SIN fórmula** (dato legítimo del ERP o
+      entrada cruda, no un cálculo pendiente): `Demanda`/`DemandaEscenario`/
+      `Inventarios`/`PlanCompras`/`LibroProduccion`/`ResumenMensual`/
+      `KPIs_UNS` (el ERP/middleware las escribe directo, decisión #2/#16 —
+      son la fuente, no un resultado derivado dentro de Sheets);
+      `Parametros`/`Licencias`/las columnas de entrada de `CAPEX` (cantidad,
+      moneda, costo_unitario) — el usuario las edita a mano por diseño,
+      decisión #3; `Tiempos` y `APU_Ingenieria` — documentales/snapshot de
+      exhibición, decisión #1 y el propio diseño de APU; el roster
+      individual de `RRHH` — dato crudo persona por persona.
+    - **Verificado**: barrido de errores en las 23 hojas → 0 errores;
+      `tools/verificacion.py` 17/17 en verde; ninguna cifra de negocio
+      cambió (mismos VPN/TIR/ROI/payback/CAPEX/nómina de siempre).
+20. **2026-07: sin supuesto de crecimiento de demanda — la evaluación
+    financiera sigue SIEMPRE la demanda que manda el ERP.** Pedido explícito
+    del dueño del proyecto: "no quiero que se tenga ese crecimiento de la
+    demanda en lo financiero... quiero que se siga la demanda que mande el
+    ERP siempre". Antes, el horizonte de 60 meses del caso de negocio
+    repetía el patrón de 12 meses del pronóstico/escenario activo pero
+    **inflándolo** con un +1.5% anual compuesto en los meses 13-60 —
+    existía en **dos motores independientes** a la vez, y había que apagarlo
+    en los dos:
+    - **Motor Python** (`core/finanzas_negocio.py`): se eliminó por completo
+      `CRECIMIENTO_DEMANDA_ANUAL` (constante, alias `crecimiento_demanda`,
+      entrada en `_CLAVES_PARAMETROS`/`_parametros()`) y el factor `crec`
+      que multiplicaba la demanda en `flujos_desde_demanda()` — ahora el
+      patrón de 12 meses se repite **idéntico** los 5 años, sin excepción,
+      sin importar lo que diga Sheets.
+    - **Motor nativo de Sheets** (`ER_Proyecto`/`FinancieroEscenario`, el
+      modelo tipo seed, independiente del motor Python): tenía la MISMA
+      idea aplicada en **~900 celdas de fórmula** (`=Demanda!...*(1+
+      Parametros!$B$10)^N`) — en vez de tocar 900 fórmulas, se neutralizó
+      en la raíz: `Parametros!crecimiento_demanda` (B10) → **0%** (con
+      B10=0, `(1+0)^N=1` para cualquier N, así que el crecimiento
+      desaparece sin romper ninguna fórmula que lo referencia). Verificado
+      con lectura directa: mes 1 = mes 13 = mes 25 = mes 37 = mes 49 de
+      `ER_Proyecto` dan exactamente el mismo número. La fila de Parametros
+      se conserva (mismo patrón que el CAPEX en cantidad=0) con nota
+      explicando que ya no se aplica.
+    - **Nuevas cifras** (sin crecimiento, escenario Base): motor Python VPN
+      $15.935 M / TIR 83.8 % E.A. / ROI 242.8 % / payback 21/24 m (baja
+      desde $16.661 M/85.7 %/253.1 % — la caída es solo en años 2-5, el
+      payback no se mueve porque ocurre temprano). El motor nativo de
+      Sheets (`Sensibilidad`, escenario Base) baja más — $10.802 M/62.6 %
+      — porque su estructura de fórmulas responde distinto a la demanda
+      plana; **es la brecha esperada entre los dos modelos paralelos**
+      (documentada desde antes, ver decisión #3 y el skill
+      `modelo-financiero-ulogix`: nunca fueron el mismo cálculo, solo
+      convergían cuando ambos tenían el mismo supuesto de crecimiento
+      aplicado — al quitarlo de los dos, la estructura distinta de cada
+      motor produce una brecha algo mayor que antes).
+    - **De paso, se conectó `Parametros!nomina_operacion_mes`/
+      `nomina_implementacion_mes` (B23/B24) con fórmula viva a `RRHH`**
+      (`INDEX/MATCH` por etiqueta, mismo patrón robusto que el total de
+      `CAPEX`) — antes eran copias estáticas de la vieja hoja `Personal`
+      (ya no existe, decisión #17); si el roster de `RRHH` cambia, estas
+      celdas ahora se actualizan solas, y con ellas el motor Python (que
+      lee `Parametros`, no `RRHH` directo) y el motor nativo de Sheets
+      (que ya referenciaba `Parametros!$B$16` para capital de trabajo, etc.
+      — la nómina ahora también queda genuinamente en vivo de punta a
+      punta). Se corrigió además una nota obsoleta en `Parametros!D32`
+      ("hoja OEE_TEEP" → "hoja Tiempos", la primera ya no existe).
+
+21. **2026-07: remediación de secretos expuestos en el repo público.**
+    Encontrado durante una revisión de rutina: una API key real de Odoo, la
+    URL/DB/correo real de la instancia, la IP LAN/Tailscale real del broker
+    MQTT y del endpoint OPC-UA, el ID real del spreadsheet de Sheets y el
+    `client_email` de la cuenta de servicio estaban **hardcodeados y
+    commiteados** en `.env.example`, `docs/INTEGRACION_APIS.md`, ambos
+    `SKILL.md` de integraciones/UNS, `README.md`, `tools/bootstrap_odoo.py`,
+    `config/settings.py` (default de `OPCUA_ENDPOINT`) y
+    `docker-compose.dashboard.yml` (comentario) — confirmado en el
+    historial de git desde hace varios commits, incluido pusheado a
+    `github.com/ulogix-team/ulogix-erp` (público). `.env` en sí y
+    `config/google_service_account.json` **nunca** estuvieron versionados
+    (correcto, siguen sin estarlo). Se redactó el árbol de trabajo completo
+    reemplazando cada valor real por un placeholder genérico o una
+    referencia a la variable de `.env` (`tu-ip-o-host-del-broker`,
+    `tu-instancia.odoo.com`, `MQTT_HOST` en vez del IP literal, etc.) —
+    `git grep` final confirma cero coincidencias de la API key, la IP, la
+    URL/correo de Odoo, el ID del spreadsheet o el correo de la cuenta de
+    servicio en archivos versionados. **No se reescribió el historial de
+    git** (decisión explícita del dueño del proyecto: rotar la API key de
+    Odoo por su cuenta en vez de purgar el historial) — el valor viejo
+    sigue técnicamente visible en commits antiguos del remoto hasta que se
+    rote. Si se vuelve a tocar cualquiera de estos archivos, **nunca**
+    reintroducir un valor real — todos los ejemplos de aquí en adelante
+    deben usar placeholders o `$MQTT_HOST`/`<ODOO_URL>`/etc.
+
+22. **2026-07: hoja `Analisis_Paletizado` — caso de inversión paralelo,
+    antes/después de automatizar paletizado + encajonado.** Pedido
+    explícito: comparar, por línea, paletizado manual (operarios) vs.
+    celda robótica ULogix (CAPEX + tarifa de servicios) vs. comprar una
+    máquina comercial, incluyendo encajonado para retornables. Nuevo
+    módulo puro `core/analisis_paletizado.py` + publicador
+    `tools/publicar_analisis_paletizado.py` (mismo patrón que
+    `APU_Ingenieria`, decisión #11: hoja de **solo exhibición**, no toca
+    `CAPEX_FILAS` ni el caso de negocio principal — VPN/TIR del proyecto
+    completo, decisión #20, no cambian). Alcance real de las 2 estaciones
+    de FINAL de línea: paletizado en L1/L2/L3; encajonado (empacar
+    producto lleno en canastilla) **solo en L1** — L2 es PET no retornable
+    (bandeja/película, no canastilla) y L3 (garrafón 25 L) es demasiado
+    grande para canastilla estándar, se paletiza a granel. La máquina de
+    referencia que dio el dueño del proyecto (Krones Linapac-A-T-1600,
+    bevmaq.es, EUR 14.000 usada) resultó ser, tras revisarla, una
+    **desencajonadora** (retira botella vacía de canastilla al INICIO de
+    línea, antes del lavado) — no una paletizadora ni un encajonador de
+    producto lleno; se dejó documentado en la hoja como referencia
+    ilustrativa de precio de mercado, no como sustituto funcional
+    (confirmado con el dueño del proyecto antes de construir la hoja).
+    CAPEX de las celdas de paletizado es el BOM real ya existente (GANTRY
+    L1-L2 USD* 107.993 compartido, ROBOT L3 USD* 131.896, decisión #15); el
+    CAPEX de una celda de encajonado para L1 (no existe en el proyecto) y
+    los precios de máquinas comerciales son **estimaciones de ingeniería
+    documentadas sin cotización real**, mismo tratamiento que el supuesto
+    de split de L7 en decisión #15. Tarifa de servicios ULogix = AIU 27.5%
+    (punto medio de la banda de mercado 25-30% ya validada en decisión #11)
+    sobre el CAPEX de equipo de esta cadena de valor específica — no existía
+    ningún concepto de "tarifa ULogix" antes de esta hoja, se definió por
+    analogía directa con la metodología APU ya establecida. Resultado (TMAR
+    18%, horizonte 10 años = vida útil de "equipos"): **ULogix gana a la
+    opción comercial en las 3 líneas** por dos motores estructurales, no
+    un supuesto forzado — (1) la celda GANTRY sirve a L1+L2 a la vez, una
+    máquina comercial no; (2) el CAPEX ULogix parte de costeo directo de
+    BOM (USD*, sin margen de venta) mientras el comercial es precio de
+    lista (USD benchmark, con `FACTOR_RFQ`). L1 y L2 (ULogix) son
+    rentables por sí solas (TIR 43.7 %/29.9 %, payback 2.2/3.1 años). **L3
+    (ULogix) es marginal como decisión aislada** (TIR 3.2 %, por debajo de
+    la TMAR, payback 8.45 años) — el brazo articulado es más caro que el
+    GANTRY pero libera solo 2 operarios de 1 turno en la línea de menor
+    volumen; sigue siendo defendible dentro del proyecto completo (el
+    caso de negocio agregado se sostiene con el EBITDA demand-driven de
+    las 3 líneas juntas, no con el ahorro de mano de obra de L3 aislado),
+    pero no se pagaría sola si el criterio fuera únicamente esta decisión.
 
 ## Estado actual (validado)
 
@@ -458,9 +637,11 @@ nombres de servicio.
   MRP/compras (*Órdenes Odoo*) y finanzas (*Finanzas*, comparación Base vs.
   escenario) ya usaban `demanda_activa()` desde antes.
 - Caso de negocio (demanda v4, CAPEX recortado — decisión #15, sin lavadoras
-  ni inspección de línea, celdas robóticas a detalle de BOM real): CAPEX
-  $12.188 M · EBITDA incremental $13.182 M (12 m operativos) · **VPN $16.661
-  M · TIR 85.7 % E.A. · ROI 253.1 % · payback 21/24 m**.
+  ni inspección de línea, celdas robóticas a detalle de BOM real; sin
+  supuesto de crecimiento de demanda — decisión #20, el horizonte de 60
+  meses repite el patrón de 12 meses del ERP sin inflarlo): CAPEX $12.188 M
+  · EBITDA incremental $13.119 M (12 m operativos) · **VPN $15.935 M · TIR
+  83.8 % E.A. · ROI 242.8 % · payback 21/24 m**.
 - Libro Excel: 23 hojas, 3.741 fórmulas, **0 errores** tras recalcular (cifras
   del caso de negocio pendientes de regenerar el libro con el CAPEX nuevo).
 - `tools/verificacion.py`: **17/17 en verde**.

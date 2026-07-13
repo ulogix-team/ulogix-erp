@@ -63,7 +63,6 @@ SCRAP_PP = 0.0004
 MANT_EVITADO_MES = 85_000_000.0
 TASA_RENTA = 0.35
 WC_PCT_INGRESO = 0.08
-CRECIMIENTO_DEMANDA_ANUAL = 0.015
 FASES_CAPEX = [0.20, 0.35, 0.27, 0.18]
 NOMINA_OPERACION_MES = 85_915_382.0      # Personal (base y proyecto)
 NOMINA_IMPLEMENTACION_MES = 87_161_760.0  # equipo ULogix, meses pre-op
@@ -229,7 +228,7 @@ def _num(valor, default: float) -> float:
 _CLAVES_PARAMETROS = {
     "TRM", "FACTOR_RFQ", "TMAR_ANUAL", "UPLIFT_THROUGHPUT", "FACTOR_MONETIZACION",
     "RAMPA_MES5", "SCRAP_PP", "MANT_EVITADO_MES", "TASA_RENTA", "WC_PCT_INGRESO",
-    "CRECIMIENTO_DEMANDA_ANUAL", "FASES_CAPEX", "NOMINA_OPERACION_MES",
+    "FASES_CAPEX", "NOMINA_OPERACION_MES",
     "NOMINA_IMPLEMENTACION_MES", "OTROS_FIJOS_BASE_MES", "OTROS_FIJOS_PROYECTO_MES",
     "OPEX_LICENCIAS_MES", "CAPEX_SOFTWARE", "CONTINGENCIA",
 } | {f"VIDA_{cat}" for cat in VIDAS} | {
@@ -246,7 +245,6 @@ _ALIAS_PARAMETROS = {
     "factor_rfq_benchmark": "FACTOR_RFQ",
     "tmar_anual": "TMAR_ANUAL",
     "tasa_renta": "TASA_RENTA",
-    "crecimiento_demanda": "CRECIMIENTO_DEMANDA_ANUAL",
     "uplift_throughput": "UPLIFT_THROUGHPUT",
     "factor_monetizacion": "FACTOR_MONETIZACION",
     "rampa_mes5": "RAMPA_MES5",
@@ -330,8 +328,6 @@ def _parametros(forzar: bool = False) -> dict:
         "mant_evitado_mes": _num(ov.get("MANT_EVITADO_MES"), MANT_EVITADO_MES),
         "tasa_renta": _num(ov.get("TASA_RENTA"), TASA_RENTA),
         "wc_pct_ingreso": _num(ov.get("WC_PCT_INGRESO"), WC_PCT_INGRESO),
-        "crecimiento_demanda_anual": _num(ov.get("CRECIMIENTO_DEMANDA_ANUAL"),
-                                          CRECIMIENTO_DEMANDA_ANUAL),
         "fases_capex": fases,
         "nomina_operacion_mes": _num(ov.get("NOMINA_OPERACION_MES"), NOMINA_OPERACION_MES),
         "nomina_implementacion_mes": _num(ov.get("NOMINA_IMPLEMENTACION_MES"),
@@ -449,12 +445,16 @@ def flujos_desde_demanda(demanda_mensual: pd.DataFrame | None = None,
     cx = capex(forzar_refresco, p)
     dep_mes = dep_mensual_total(forzar_refresco, p)
 
+    # Sin supuesto de crecimiento interanual: el patron de 12 meses que
+    # manda el ERP (pronostico o escenario activo) se repite tal cual en
+    # los 5 anios del horizonte -- pedido explicito del dueno del proyecto,
+    # la evaluacion financiera sigue SIEMPRE la demanda del ERP, sin
+    # inflarla con una tasa de crecimiento aparte.
     ingreso_b = np.zeros(MESES); cogs_b = np.zeros(MESES); u = np.zeros(MESES)
     for m in range(1, MESES + 1):
         fila = dem12.iloc[(m - 1) % 12]
-        crec = (1 + p["crecimiento_demanda_anual"]) ** ((m - 1) // 12)
         for s in SKUS:
-            q = float(fila[f"{s}_unidades"]) * crec
+            q = float(fila[f"{s}_unidades"])
             u[m - 1] += q
             ingreso_b[m - 1] += q * precio[s]
             cogs_b[m - 1] += q * costo[s]

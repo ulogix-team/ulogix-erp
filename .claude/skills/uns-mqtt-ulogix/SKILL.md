@@ -104,7 +104,7 @@ recorte al exceder el objetivo.
 
 ## Reglas de red (causa #1 de "no conecta")
 
-- **Fuera de Docker**: usar la **IP LAN del host** → `100.123.104.31:1883`.
+- **Fuera de Docker**: usar la **IP LAN del host** (`MQTT_HOST` en tu `.env`).
   Nunca `localhost`, nunca el hostname del servicio Docker.
 - **Dentro de docker-compose**: los nombres de servicio sí resuelven.
 - Herramientas externas (Tecnomatix, RoboDK, UAExpert) → siempre IP LAN.
@@ -123,7 +123,7 @@ python tools/simulador_produccion.py --n 20    # terminal 2 (KPIs + GoodCount al
 python tools/simulador_produccion.py --legacy  # contrato v1
 python tools/simulador_produccion.py --offline # sin broker
 
-mosquitto_sub -h 100.123.104.31 -t "FEMSA/+/ERP/#" -v   # ver la rama retenida
+mosquitto_sub -h $MQTT_HOST -t "FEMSA/+/ERP/#" -v   # ver la rama retenida
 ```
 
 También hay diagnóstico en vivo en la **página 7 (Pruebas)** del dashboard: hace

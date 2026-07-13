@@ -245,7 +245,12 @@ def main() -> None:
     except Exception:  # noqa: BLE001
         ws = ss.add_worksheet("Tiempos", rows=len(filas) + 20, cols=ancho)
     ws.clear()
-    ws.update(filas, "A1", value_input_option="USER_ENTERED")
+    # RAW, no USER_ENTERED: toda la hoja es texto/numeros documentales
+    # estaticos (decision #1/#17 de CLAUDE.md, NO son formulas vivas) --
+    # USER_ENTERED deja que Sheets reinterprete texto que empieza con "+"
+    # (p.ej. "+1.93pp A: ...") como el INICIO de una formula estilo
+    # Lotus 1-2-3 y revienta en #ERROR!
+    ws.update(filas, "A1", value_input_option="RAW")
 
     # formato: titulo general, bloques, encabezados de sub-tabla
     ws.format(f"A1:{chr(64+min(ancho,26))}1", FMT_TITULO)
