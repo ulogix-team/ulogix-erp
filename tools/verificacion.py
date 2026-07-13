@@ -207,8 +207,13 @@ def _fin():
     previo, settings.DRY_RUN_FORZADO = settings.DRY_RUN_FORZADO, True
     ind = indicadores()
     settings.DRY_RUN_FORZADO = previo
-    assert ind["vpn_cop"] > 0 and 0.20 < ind["tir_anual"] < 0.50
-    assert ind["payback_simple_meses"] == 33
+    # 2026-07: CAPEX reducido (sin lavadoras ni inspeccion de linea, celdas
+    # roboticas a detalle de BOM real) -- ver decision de diseno #15 de
+    # CLAUDE.md. El EBITDA incremental no cambio (es demand-driven, no
+    # CAPEX-driven) y el CAPEX casi se redujo a la mitad, por lo que la TIR
+    # y el payback mejoraron sustancialmente frente al caso anterior.
+    assert ind["vpn_cop"] > 0 and 0.70 < ind["tir_anual"] < 1.00
+    assert ind["payback_simple_meses"] == 21
     return (f"VPN ${ind['vpn_cop']/1e6:,.0f}M · TIR {ind['tir_anual']*100:.1f}% · "
             f"ROI {ind['roi_horizonte_60m']*100:.1f}% · payback {ind['payback_simple_meses']}m")
 
@@ -262,9 +267,59 @@ def _disponible():
     return "orden activa avanza sola; ruido descendente ignorado; exceso recortado al objetivo"
 
 
+@paso("17. Inventario en vivo (stock local + cola de sync parcial a Odoo)")
+def _stock():
+    # QA de LOGICA (dry-run) de state_store: el mecanismo real de backorder
+    # contra Odoo (integrations.odoo_client.avanzar_produccion_parcial) se
+    # verifico en vivo contra la instancia real por separado (no es
+    # reproducible en dry-run porque depende del wizard mrp.production.
+    # backorder de Odoo) -- aqui se prueba que el ERP local mueve el stock
+    # correctamente y que la cola de sync a Odoo se marca/despeja bien.
+    from config import settings
+    from integrations import state_store
+    from integrations.mqtt_middleware import Middleware
+    import json
+    previo, settings.DRY_RUN_FORZADO = settings.DRY_RUN_FORZADO, True
+    mw = Middleware()
+    sku = "P1-CC350-RGB"
+
+    with state_store.conexion() as con:
+        con.execute("DELETE FROM inventario_stock")
+        con.execute("DELETE FROM movimientos_stock")
+        # pasos anteriores (7-9, 16) ya dejaron ordenes 'abierta'/'recibida_odoo'
+        # para este mismo sku -- orden_activa() tomaria la mas antigua de ellas
+        # en vez de la de esta prueba si no se limpian primero
+        con.execute("DELETE FROM po_tracking WHERE sku=?", (sku,))
+    state_store.registrar_po("QA-STOCK-001", sku, qty_objetivo=100,
+                             mo_id=111, mo_name="QA-MO-STOCK-001")
+
+    mw.manejar_mensaje("FEMSA/Linea1/ERP/AvailableQuantity", json.dumps({"value": 40}))
+    stock = {r["codigo"]: r for r in state_store.stock_actual()}
+    assert stock[sku]["cantidad"] == 40, stock[sku]
+    assert stock["TAP-CORONA"]["cantidad"] == -40  # 1 tapa por unidad, ver data/bom.csv
+
+    pendientes = {p["po_name"] for p in state_store.pos_para_sincronizar_odoo()}
+    assert "QA-STOCK-001" in pendientes
+
+    state_store.marcar_sincronizado_odoo("QA-STOCK-001", 40, 222, "QA-MO-STOCK-001-002")
+    pendientes2 = {p["po_name"] for p in state_store.pos_para_sincronizar_odoo()}
+    assert "QA-STOCK-001" not in pendientes2  # ya sincronizado, no vuelve a aparecer
+
+    mw.manejar_mensaje("FEMSA/Linea1/ERP/AvailableQuantity", json.dumps({"value": 100}))
+    stock2 = {r["codigo"]: r for r in state_store.stock_actual()}
+    assert stock2[sku]["cantidad"] == 100
+    po = [p for p in state_store.listar_pos() if p["po_name"] == "QA-STOCK-001"][0]
+    assert po["estado"] == "recibida_odoo"
+
+    settings.DRY_RUN_FORZADO = previo
+    return (f"stock local sube con cada avance ({stock2[sku]['cantidad']:.0f} un producto "
+            "terminado) y baja materia prima segun BOM; cola de sync a Odoo se marca y "
+            "despeja bien")
+
+
 if __name__ == "__main__":
     for fn in [_datos, _forecast, _esc, _inv, _mrp, _sens, _odoo, _ventas, _mw,
-               _cont, _uns, _erp, _toee, _fin, _rrhh, _disponible]:
+               _cont, _uns, _erp, _toee, _fin, _rrhh, _disponible, _stock]:
         fn()
     print("\n=== VERIFICACION ULOGIX ===")
     ok = True

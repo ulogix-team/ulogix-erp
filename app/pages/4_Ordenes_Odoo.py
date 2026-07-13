@@ -88,6 +88,11 @@ if st.button("🛒 Crear ordenes en Odoo", type="primary", disabled=not sel_refs
         if avanzar and not res.get("facturada"):
             avisos.append(f"⚠️ {res['name']}: la factura de proveedor no se pudo "
                           "generar (ver Auditoria abajo para el detalle).")
+        if res.get("recibida"):  # insumos ya en bodega -> entra al stock local de materia prima
+            for l in lineas_df.itertuples():
+                state_store.ajustar_stock("componente", l.componente, float(l.cantidad),
+                                          "recepcion_po", descripcion=l.descripcion,
+                                          uom=l.uom, referencia=res["name"])
 
         # una sola orden de fabricacion por (producto, mes): la comparten las
         # POs de distintos proveedores que abastecen el mismo lote

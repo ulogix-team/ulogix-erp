@@ -77,31 +77,110 @@ REF_XLSM = {"vpn": 2_180_752_718.0, "tir_anual": 0.2316,
 
 # ------------------------------ CAPEX (default/fallback; ver hoja CAPEX en Sheets)
 # (seccion, linea, activo, cant, moneda, costo_unit, vida_anios, categoria_dep)
+#
+# 2026-07: alcance del proyecto reducido por pedido explicito del dueño --
+# ya no se compran lavadoras ni elementos de inspeccion de linea (quedan en
+# cantidad=0, no se borran, para conservar el registro de que se evaluaron y
+# se excluyeron). Las 2 filas resumen de celdas roboticas se expandieron a
+# detalle de componente real a partir de las BOM de ingenieria de las celdas
+# de paletizado (GANTRY L1-L2, brazo articulado L3) -- ver decision de diseno
+# #15 de CLAUDE.md. moneda "USD*" = cotizacion real de la BOM (sin el factor
+# RFQ de "USD", que es solo un benchmark no confirmado).
 CAPEX_FILAS = [
-    ("Benchmark retrofit", "L2 330 mL", "Upgrade lavadora retornable / prewash (KRONES Lavatec)", 1, "USD", 450_000, 10, "equipos"),
-    ("Benchmark retrofit", "L2 330 mL", "Inspeccion envase vacio (HEUFT SPECTRUM II SX)", 1, "USD", 180_000, 7, "automatizacion"),
+    ("Benchmark retrofit", "L2 330 mL", "Upgrade lavadora retornable / prewash (KRONES Lavatec)", 0, "USD", 450_000, 10, "equipos"),
+    ("Benchmark retrofit", "L2 330 mL", "Inspeccion envase vacio (HEUFT SPECTRUM II SX)", 0, "USD", 180_000, 7, "automatizacion"),
     ("Benchmark retrofit", "L2 330 mL", "Retrofit llenadora / tapadora (KRONES Modulfill HES)", 1, "USD", 650_000, 10, "equipos"),
-    ("Benchmark retrofit", "L2 330 mL", "Etiquetadora y sincronizacion (servos)", 1, "USD", 120_000, 7, "automatizacion"),
+    ("Benchmark retrofit", "L2 330 mL", "Etiquetadora y sincronizacion (servos)", 0, "USD", 120_000, 7, "automatizacion"),
     ("Benchmark retrofit", "L2 330 mL", "Conveyors, motores y VFD (ABB retrofit)", 1, "USD", 160_000, 7, "equipos"),
-    ("Benchmark retrofit", "L3 PET 1.5 L", "Bloc soplado-llenado-tapado retrofit (KRONES Contiform)", 1, "USD", 850_000, 10, "equipos"),
-    ("Benchmark retrofit", "L3 PET 1.5 L", "Inspeccion botella llena (HEUFT PRIME)", 1, "USD", 160_000, 7, "automatizacion"),
+    ("Benchmark retrofit", "L3 PET 1.5 L", "Bloc soplado-llenado-tapado retrofit (KRONES Contiform)", 0, "USD", 850_000, 10, "equipos"),
+    ("Benchmark retrofit", "L3 PET 1.5 L", "Inspeccion botella llena (HEUFT PRIME)", 0, "USD", 160_000, 7, "automatizacion"),
     ("Benchmark retrofit", "L3 PET 1.5 L", "Etiquetado / empaque PET", 1, "USD", 140_000, 7, "equipos"),
     ("Benchmark retrofit", "L3 PET 1.5 L", "Conveyors / transporte PET", 1, "USD", 210_000, 10, "equipos"),
-    ("Benchmark retrofit", "L7 Agua 25 L", "Lavado y sanitizacion garrafon", 1, "USD", 230_000, 10, "equipos"),
-    ("Benchmark retrofit", "L7 Agua 25 L", "Skid tratamiento de agua (KRONES Hydronomic)", 1, "USD", 320_000, 10, "equipos"),
-    ("Benchmark retrofit", "L7 Agua 25 L", "Llenado / taponado / inspeccion garrafon", 1, "USD", 240_000, 10, "equipos"),
+    ("Benchmark retrofit", "L7 Agua 25 L", "Lavado y sanitizacion garrafon", 0, "USD", 230_000, 10, "equipos"),
+    ("Benchmark retrofit", "L7 Agua 25 L", "Skid tratamiento de agua (KRONES Hydronomic)", 0, "USD", 320_000, 10, "equipos"),
+    # split de "Llenado / taponado / inspeccion garrafon" ($240k, mismo patron que
+    # ya uso el usuario en L2/L3 al separar llenado de inspeccion en filas propias.
+    # Sin desglose real del proveedor para garrafon: se estima inspeccion ~15% del
+    # combo (banda baja vs. L2 180k/830k=21.7% y L3 160k/1010k=15.8%, razonable
+    # porque garrafon es la linea mas lenta -- 480 und/h, core/tiempos_oee.py -- y
+    # un chequeo de nivel de llenado ahi es mecanicamente mas simple que la vision
+    # de envase vacio/lleno de L2/L3). Suma exacta = 240_000 (204_000 + 36_000).
+    ("Benchmark retrofit", "L7 Agua 25 L", "Llenado / taponado garrafon", 1, "USD", 204_000, 10, "equipos"),
+    ("Benchmark retrofit", "L7 Agua 25 L", "Inspeccion garrafon", 0, "USD", 36_000, 10, "automatizacion"),
     ("Benchmark retrofit", "L7 Agua 25 L", "Conveyors y manipulacion de garrafon", 1, "USD", 110_000, 7, "equipos"),
     ("Benchmark retrofit", "Comun", "PLC panels / I/O / seguridad (CompactLogix + safety)", 3, "USD", 106_667, 7, "automatizacion"),
     ("Benchmark retrofit", "Comun", "HMIs / estaciones SCADA", 6, "USD", 10_000, 5, "automatizacion"),
-    ("Benchmark retrofit", "Comun", "Camaras y vision artificial (Cognex)", 1, "USD", 95_000, 5, "automatizacion"),
+    ("Benchmark retrofit", "Comun", "Camaras y vision artificial (Cognex)", 0, "USD", 95_000, 5, "automatizacion"),
     ("Benchmark retrofit", "Comun", "Sensores / transmisores / valvulas (pack)", 1, "USD", 55_000, 5, "automatizacion"),
     ("Benchmark retrofit", "Comun", "Red industrial y ciberseguridad (switches/FW/UPS)", 1, "USD", 75_000, 5, "automatizacion"),
     ("Benchmark retrofit", "Comun", "Servidor edge / historian / gateway MES-UNS (MQTT)", 1, "USD", 90_000, 5, "automatizacion"),
     ("Servicios", "Comun", "Ingenieria de detalle, FAT/SAT y PMO", 1, "COP", 1_164_000_000, 5, "servicios"),
     ("Servicios", "Comun", "Instalacion y puesta en marcha (EPC)", 1, "COP", 970_000_000, 5, "servicios"),
     ("Servicios", "Comun", "Capacitacion y gestion del cambio", 1, "COP", 242_500_000, 3, "intangibles"),
-    ("Celdas roboticas (BOM real)", "L1-L2", "Celda GANTRY de paletizado — BOM real (36 items)", 1, "USD*", 107_993, 10, "equipos"),
-    ("Celdas roboticas (BOM real)", "L3", "Celda ROBOT ARTICULADO — BOM real (IRB 5710 + Omnicore)", 1, "USD*", 131_896, 10, "equipos"),
+    # --- Celda GANTRY de paletizado L1-L2 -- BOM real (36 items, total USD 107,993;
+    # ver decision de diseno #6: GRP001 de 4 mordazas aqui es DISTINTO del GRP001 de
+    # 3 ventosas de L3 mas abajo -- no consolidar, quedan marcados con su referencia.
+    ("Celdas roboticas (BOM real)", "L1-L2", "Servomotor MU 300 (ABB)", 1, "USD*", 2_800, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Servomotor MU 200 (ABB)", 1, "USD*", 2_000, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Controlador IRC5 (ABB)", 1, "USD*", 18_000, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Reductor AB115-005-S2-P2 (Apex Dynamics)", 1, "USD*", 1_100, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Eje lineal Rexroth_CKK280_S2200 (Bosch-Rexroth)", 1, "USD*", 5_500, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Eje lineal Rexroth_CKR280_S4600 (Bosch-Rexroth)", 1, "USD*", 7_500, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Acople ACP001 (Manufacturado)", 1, "USD*", 450, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Perfil de soporte gantry SP001 (Manufacturado)", 2, "USD*", 1_200, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Gripper neumatico GRP001 4 mordazas 40 kg (Manufacturado)", 1, "USD*", 9_000, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Cilindro neumatico DSBC-80-150-PPSA-N3 (Festo)", 8, "USD*", 220, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Valvula antirretorno HGL-3/8-QS-8 (Festo)", 8, "USD*", 55, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Electrovalvula VUVS-L30-B52-D-G38-F8-1B2 (Festo)", 1, "USD*", 220, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Regulador de caudal GRLA-3/8-QS-8-D (Festo)", 8, "USD*", 28, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Sensor de posicion SMAT-8M-U-E-2,5-OE (Festo)", 4, "USD*", 60, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Unidad FRL MS4-LFR-1/4-D6-E-R-M (Festo)", 1, "USD*", 240, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Transportador PM 9710 (Interroll)", 8, "USD*", 5_500, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Sensor de posicion OBR7500-R100-2EP-IO-V31 (Pepper+Fuchs)", 3, "USD*", 220, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Vallado modular ImpactGuard System-H3120-S60-T30 (Satech)", 6, "USD*", 220, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Panel perimetral W300-H2960 (Satech)", 5, "USD*", 420, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Panel perimetral W200-H2960 (Satech)", 1, "USD*", 380, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Panel perimetral W700-H1480 (Satech)", 1, "USD*", 220, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Panel perimetral W800-H1480 (Satech)", 4, "USD*", 240, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Panel perimetral W1000-H1480 (Satech)", 1, "USD*", 260, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Puerta Single Leaf Door ImpactGuard-H3120-S60-T30 (Satech)", 1, "USD*", 750, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Interlock AZM 415-02/02ZPK 24VAC/DC (Satech/Schmerzal)", 1, "USD*", 320, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Cortina optica ADMIRAL AD 1651 (ReeR)", 2, "USD*", 1_100, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Interfaz cortina optica SR ONE M (ReeR)", 2, "USD*", 380, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Torre de senalizacion KS72 Classic RM (Werma)", 2, "USD*", 210, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Parada de emergencia Serie 45-Ø40mm-2NC (EAO)", 1, "USD*", 35, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Parada de emergencia Serie 84-Ø32mm-IP67-M12 (EAO)", 1, "USD*", 70, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Breaker termomagnetico S203-K25 (ABB)", 1, "USD*", 70, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "RCD F204 B-40/0.3 (ABB)", 1, "USD*", 350, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Mini-breaker 1P 1A S201-C1 (ABB)", 8, "USD*", 18, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Gabinete electrico NSYCRN75250 (Schneider Electric)", 1, "USD*", 260, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Fuente de alimentacion DC CP-E 24/10.0 (ABB)", 1, "USD*", 190, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "HMI CP620 (ABB)", 1, "USD*", 650, 10, "equipos"),
+    # --- Celda ROBOT ARTICULADO L3 -- BOM real (24 items, total USD 131,896)
+    ("Celdas roboticas (BOM real)", "L3", "Robot IRB 5710-110/2.3 (ABB)", 1, "USD*", 65_000, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Controlador Omnicore V250XT (ABB)", 1, "USD*", 22_000, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Transportador PM 9710 (Interroll)", 5, "USD*", 5_500, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Gripper neumatico GRP001 3 ventosas 15.5 kg (Manufacturado)", 1, "USD*", 4_500, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Generador de vacio OVEM-14-L-B-QO-CE-N-1P (Festo)", 3, "USD*", 320, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Acumulador de vacio CRVZS-0.1 (Festo)", 3, "USD*", 45, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Filtro de vacio VAF-PK-6 (Festo)", 3, "USD*", 55, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Unidad FRL MS4-LFR-1/4-D6-C-P-M-AG-BAR-B (Festo)", 1, "USD*", 220, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Vallado modular ImpactGuard System-H3120-S60-T30 (Satech)", 20, "USD*", 220, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Puerta Single Leaf Door ImpactGuard-H3120-S60-T30 (Satech)", 1, "USD*", 750, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Interlock AZM 415-02/02ZPK 24VAC/DC (Satech/Schmerzal)", 1, "USD*", 320, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Cortina optica ADMIRAL AD 1651 (ReeR)", 2, "USD*", 1_100, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Cortina optica ADMIRAL AD 2B (ReeR)", 1, "USD*", 550, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Interfaz cortina optica SR ONE M (ReeR)", 2, "USD*", 380, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Interfaz cortina optica SR ONE (ReeR)", 1, "USD*", 260, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Torre de senalizacion KS72 Classic RM (Werma)", 2, "USD*", 210, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Parada de emergencia Serie 45-Ø40mm-2NC (EAO)", 1, "USD*", 35, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Parada de emergencia Serie 84-Ø32mm-IP67-M12 (EAO)", 1, "USD*", 70, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Breaker termomagnetico S203-K32 (ABB)", 1, "USD*", 75, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "RCD F204 B-40/0.3 (ABB)", 1, "USD*", 350, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Mini-breaker 1P 1A S201-C1 (ABB)", 7, "USD*", 18, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Gabinete electrico NSYCRN75250 (Schneider Electric)", 1, "USD*", 260, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Fuente de alimentacion DC CP-E 24/10.0 (ABB)", 1, "USD*", 190, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "HMI CP620 (ABB)", 1, "USD*", 650, 10, "equipos"),
     ("Software", "Comun", "Licencias perpetuas capitalizables (Studio 5000)", 1, "COP", CAPEX_SOFTWARE, 3, "software"),
 ]
 CONTINGENCIA = 0.10

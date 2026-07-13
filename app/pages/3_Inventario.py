@@ -6,9 +6,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import plotly.graph_objects as go
 import streamlit as st
 
+import pandas as pd
+
 from app.ui import theme
-from app.ui.theme import COLOR_SKU, NOMBRE_CORTO
+from app.ui.theme import COL, COLOR_SKU, NOMBRE_CORTO
 from core.inventario import ParametrosInventario, plan_compras, simular_inventario
+from core.tiempos_oee import DATOS as _LINEAS_OEE
+from core.tiempos_oee import tabla_capacidad, tabla_tiempos
+from integrations import state_store
 
 theme.preparar_pagina("Inventario", "📦")
 theme.encabezado("INVENTARIO Y MRP",
@@ -20,6 +25,53 @@ nombre_esc, dem = theme.demanda_activa()
 metricas = theme.datos_pronostico()["metricas"]
 _sigma_prod = dict(zip(metricas["producto"], metricas["sigma_rel"]))
 _prod_sku = {"P1-CC350-RGB": "P1", "P2-QT1500-PET": "P2", "P3-GARR25L": "P3"}
+
+# ------------------------------------------------------------------ stock en vivo
+st.subheader("📊 Stock actual (tiempo real)")
+st.caption("Se mueve solo, sin botones: cada avance real de producción "
+           "(`AvailableQuantity`/`GoodCount` por MQTT) suma producto terminado y "
+           "resta materia prima según `data/bom.csv`; cada PO de insumos recibida "
+           "(*Órdenes Odoo*) suma materia prima; cada venta entregada (*Ventas y "
+           "Facturación*) resta producto terminado. Es el inventario del **ERP "
+           "local** — en Odoo, el mismo movimiento físico se refleja al validar "
+           "cada orden de fabricación (`mrp.production`) y cada entrega "
+           "(`stock.picking`); consúltalo en vivo con los botones de abajo.")
+
+stock = state_store.stock_actual()
+if not stock:
+    st.info("Aún no hay movimientos de stock. Recibe una PO de insumos o reporta "
+            "producción para que el inventario empiece a moverse.")
+else:
+    df_stock = pd.DataFrame(stock)
+    prod = df_stock[df_stock["tipo"] == "producto"].copy()
+    comp = df_stock[df_stock["tipo"] == "componente"].copy()
+
+    if not prod.empty:
+        st.markdown("**Producto terminado**")
+        cols_pt = st.columns(len(COLOR_SKU))
+        prod_ix = prod.set_index("codigo")
+        for col, sk in zip(cols_pt, COLOR_SKU):
+            with col:
+                cant = float(prod_ix.loc[sk, "cantidad"]) if sk in prod_ix.index else 0.0
+                st.metric(NOMBRE_CORTO[sk], f"{cant:,.0f} un", delta_color="off")
+
+    if not comp.empty:
+        with st.expander(f"Materia prima ({len(comp)} componentes)"):
+            st.dataframe(
+                comp[["codigo", "descripcion", "cantidad", "uom", "actualizado_ts"]]
+                    .sort_values("codigo"),
+                width="stretch", hide_index=True)
+            negativos = comp[comp["cantidad"] < 0]
+            if not negativos.empty:
+                st.warning(f"⚠️ {len(negativos)} componente(s) con saldo negativo — se "
+                           "produjo sin haber recibido suficiente insumo en el ERP local "
+                           "(revisa las PO de insumos en *Órdenes Odoo*).", icon="⚠️")
+
+    with st.expander("Movimientos recientes de stock"):
+        st.dataframe(pd.DataFrame(state_store.movimientos_stock_recientes(100)),
+                     width="stretch", hide_index=True)
+
+st.divider()
 
 # ------------------------------------------------------------------ simulacion PT
 st.subheader("📦 Simulacion de producto terminado")
@@ -109,3 +161,76 @@ st.caption("Cada linea conserva su **producto** — asi cada orden de compra que
 st.download_button("⬇ Descargar plan de compras (CSV)",
                    plan.to_csv(index=False).encode(),
                    "plan_compras_mrp.csv", "text/csv")
+
+st.divider()
+
+# ------------------------------------------------------------------ capacidad/factibilidad
+st.subheader("🏭 Capacidad y factibilidad de producción — escenario activo")
+st.caption("Compara la demanda del **escenario activo** contra la capacidad efectiva "
+           "de cada línea (estudio de tiempos auditado, `core/tiempos_oee.py`) para "
+           "saber si los turnos actuales alcanzan o si el escenario exige un turno "
+           "adicional. La base OEE/tiempos es documental y **no cambia** — lo que "
+           "cambia con el escenario es la demanda con la que se compara. Los KPIs "
+           "OEE/TEEP **en vivo** siguen llegando solo por MQTT (no se tocan aquí).")
+
+_sku_de_linea = {lin: d["sku"] for lin, d in _LINEAS_OEE.items()}
+tcap = tabla_capacidad(dem)
+ttmp = tabla_tiempos(dem)
+
+cols_cap = st.columns(3)
+for col, lin in zip(cols_cap, ["L1", "L2", "L3"]):
+    sku = _sku_de_linea[lin]
+    fila_cap = tcap[tcap["linea"] == lin].iloc[0]
+    fila_tmp = ttmp[ttmp["linea"] == lin].iloc[0]
+    factible = fila_cap["dictamen"].startswith("Factible")
+    with col:
+        with st.container(border=True):
+            st.markdown(f"**{NOMBRE_CORTO[sku]}**")
+            st.metric("Utilización (turnos actuales)",
+                      f"{fila_cap['U_turnos_actuales']*100:.0f}%",
+                      fila_cap["dictamen"],
+                      delta_color="normal" if factible else "inverse")
+            st.metric("Demanda del escenario (anual)",
+                      f"{fila_cap['demanda_2026_und']:,.0f} un",
+                      f"capacidad: {fila_cap['capacidad_efectiva_und']:,.0f} un",
+                      delta_color="off")
+            if "takt_s_por_und" in fila_tmp:
+                st.caption(f"Takt requerido: {fila_tmp['takt_s_por_und']:.3f} s/und · "
+                           f"ciclo de línea: {fila_tmp['ciclo_Tc_s']:.3f} s/und · "
+                           f"con 3er turno: {fila_cap['U_con_3_turnos']*100:.0f}% "
+                           f"({fila_cap['capacidad_3_turnos_und']:,.0f} un/año)")
+
+fig_cap = go.Figure()
+lineas_orden = ["L1", "L2", "L3"]
+fig_cap.add_trace(go.Bar(
+    x=[NOMBRE_CORTO[_sku_de_linea[l]] for l in lineas_orden],
+    y=[tcap[tcap["linea"] == l]["demanda_2026_und"].iloc[0] for l in lineas_orden],
+    name=f"Demanda ({nombre_esc})", marker_color=COL["acento"]))
+fig_cap.add_trace(go.Bar(
+    x=[NOMBRE_CORTO[_sku_de_linea[l]] for l in lineas_orden],
+    y=[tcap[tcap["linea"] == l]["capacidad_efectiva_und"].iloc[0] for l in lineas_orden],
+    name="Capacidad (turnos actuales)", marker_color=COL["acento2"]))
+fig_cap.add_trace(go.Bar(
+    x=[NOMBRE_CORTO[_sku_de_linea[l]] for l in lineas_orden],
+    y=[tcap[tcap["linea"] == l]["capacidad_3_turnos_und"].iloc[0] for l in lineas_orden],
+    name="Capacidad (3 turnos)", marker_color=COL["muted"]))
+fig_cap.update_layout(barmode="group", yaxis_title="unidades / año")
+st.plotly_chart(theme.plotly_layout(fig_cap, f"Demanda vs. capacidad · escenario {nombre_esc}"),
+                width="stretch")
+
+if not tcap["dictamen"].str.startswith("Factible").all():
+    infactibles = tcap[~tcap["dictamen"].str.startswith("Factible")]["linea"].tolist()
+    st.warning(f"⚠️ Con la demanda del escenario **{nombre_esc}**, las líneas "
+               f"{', '.join(infactibles)} no alcanzan con los turnos actuales y "
+               "requieren un turno adicional. Este hallazgo de capacidad **no** "
+               "ajusta automáticamente la nómina/OPEX del caso de negocio en "
+               "*Finanzas* (esa nómina la gobierna la hoja `Parametros` de Sheets, "
+               "editada a mano) — impleméntalo ahí manualmente si el escenario se "
+               "vuelve el plan real.", icon="⚠️")
+else:
+    st.success(f"✅ Con la demanda del escenario **{nombre_esc}**, las 3 líneas son "
+               "factibles con los turnos actuales.", icon="✅")
+
+with st.expander("Tabla de tiempos y capacidad — detalle completo"):
+    st.dataframe(ttmp, width="stretch", hide_index=True)
+    st.dataframe(tcap, width="stretch", hide_index=True)

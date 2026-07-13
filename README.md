@@ -72,9 +72,9 @@ Guía completa paso a paso: **`docs/INTEGRACION_APIS.md`**.
 5. **Producción (UNS)** — estado vivo del middleware, KPIs MES por línea,
    publicador de prueba y contrato completo del UNS.
 6. **Finanzas** — P&L del libro de producción + **caso de negocio conectado
-   a la demanda** (base vs escenario activo): CAPEX $22.216M COP · EBITDA
-   incremental $13.182M (12 m op.) · **VPN $8.033M · TIR 36,6% E.A. · ROI
-   103,8% · payback 33/42 m** + sincronización al libro de Drive.
+   a la demanda** (base vs escenario activo): CAPEX $12.188M COP · EBITDA
+   incremental $13.182M (12 m op.) · **VPN $16.661M · TIR 85,7% E.A. · ROI
+   253,1% · payback 21/24 m** + sincronización al libro de Drive.
 7. **Pruebas** — diagnóstico en vivo: eco MQTT al UNS, Odoo
    (authenticate + PO de prueba), Sheets (escribir/releer + leer Parámetros).
 8. **Base de datos** — navegador de las 7 tablas ERP con exportación CSV y

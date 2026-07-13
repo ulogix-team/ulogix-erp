@@ -33,6 +33,22 @@ fabricacion (button_mark_done): Odoo descuenta los componentes de la BOM y
 da entrada al producto terminado; recien entonces se publica/avanza a la
 SIGUIENTE orden de la cola de ese SKU.
 
+INVENTARIO EN VIVO (ERP local + Odoo), no solo al cerrar la orden:
+- ERP local: cada avance real de `AvailableQuantity`/`GoodCount` entra de
+  inmediato al inventario de `state_store` (`_aplicar_produccion_a_stock`,
+  via `actualizar_disponible`/`acumular_produccion`): sube producto
+  terminado, baja materia prima segun `data/bom.csv`. Pagina *Inventario*,
+  seccion "Stock actual".
+- Odoo: cada `INTERVALO_SYNC_ODOO` s, `sincronizar_parciales_odoo()` postea
+  en Odoo (via el mecanismo nativo de backorder de `mrp.production`) el
+  avance acumulado desde el ultimo sync -- la orden queda parcialmente
+  'done' por esa porcion (descuenta BOM, entra terminado) y Odoo crea sola
+  una MO backorder por el remanente, que el middleware sigue rastreando
+  (`po_tracking.mo_id`/`mo_name` se actualiza a esa backorder). El cierre
+  FINAL de la orden (cuando llega a su objetivo) sigue siendo
+  `completar_orden_fabricacion` (sin backorder, cubre todo lo que reste) --
+  no cambia.
+
 PUBLICACION (la suite ES el ERP del UNS): publica retained la rama
 FEMSA/LineaX/ERP/{OrderNumber (= nombre de la MO), OrderStatus,
 ScheduleStart/End, ActualStart/End, ReservedQuantity, OrderedQuantity} de la
@@ -56,6 +72,7 @@ from integrations import state_store, uns
 from integrations.odoo_client import OdooClient
 
 INTERVALO_REPUBLICAR = 15.0  # s -- reafirma la orden activa (autocuracion contra ruido)
+INTERVALO_SYNC_ODOO = 60.0   # s -- postea a Odoo (backorder parcial) el avance acumulado
 
 
 def _mapa_linea_sku() -> dict[str, str]:
@@ -107,6 +124,33 @@ class Middleware:
                         f"{po['po_name']} cubierta por produccion de {sku} "
                         f"(MO {po.get('mo_name') or '-'})")
         self.publicar_estado_erp(linea)
+
+    def sincronizar_parciales_odoo(self) -> None:
+        """Cada `INTERVALO_SYNC_ODOO` s: para cada orden 'abierta' que avanzo
+        localmente desde el ultimo sync (`state_store.pos_para_sincronizar_odoo`),
+        postea ese avance en Odoo con `avanzar_produccion_parcial` (backorder
+        parcial -- descuenta la BOM y entra el terminado por esa porcion, SIN
+        esperar a que la orden completa cierre) y actualiza el puntero local
+        a la MO backorder que queda abierta. Es la razon por la que el
+        inventario de Odoo se mueve *a medida que se produce* y no solo al
+        completar la orden entera -- ver decision de diseno correspondiente
+        en CLAUDE.md. El cierre FINAL de cada orden lo sigue haciendo
+        `_completar_orden`/`completar_orden_fabricacion` (sin backorder,
+        cubre todo lo que reste)."""
+        for po in state_store.pos_para_sincronizar_odoo():
+            delta = po["qty_producida"] - po["qty_sincronizada_odoo"]
+            if delta <= 0 or not po.get("mo_id"):
+                continue
+            res = self.odoo.avanzar_produccion_parcial(po["mo_id"], po.get("mo_name", ""),
+                                                        delta)
+            if res.get("ok"):
+                state_store.marcar_sincronizado_odoo(
+                    po["po_name"], po["qty_producida"],
+                    res.get("mo_id_nuevo", po["mo_id"]),
+                    res.get("mo_name_nuevo", po.get("mo_name", "")))
+            else:
+                state_store.log("odoo", "sync_parcial_odoo ERROR",
+                                f"{po['po_name']}: {res.get('detalle')}")
 
     def _procesar_disponible(self, linea: str, sku: str, disponible: float,
                              topic: str, payload) -> list[dict]:
@@ -249,7 +293,7 @@ class Middleware:
             try:
                 cliente.connect(settings.MQTT_HOST, settings.MQTT_PORT, keepalive=30)
                 cliente.loop_start()
-                ultimo_republicar = time.time()
+                ultimo_republicar = ultimo_sync_odoo = time.time()
                 while not self._detener:
                     time.sleep(0.5)
                     # autocuracion: reafirma la orden activa de cada linea
@@ -261,6 +305,12 @@ class Middleware:
                         for linea in self.linea_sku:
                             self.publicar_estado_erp(linea)
                         ultimo_republicar = time.time()
+                    # inventario de Odoo "a medida que se produce": postea a
+                    # Odoo el avance acumulado desde el ultimo sync (backorder
+                    # parcial), sin esperar a que la orden completa cierre
+                    if time.time() - ultimo_sync_odoo >= INTERVALO_SYNC_ODOO:
+                        self.sincronizar_parciales_odoo()
+                        ultimo_sync_odoo = time.time()
                 cliente.loop_stop(); cliente.disconnect()
             except Exception as e:  # noqa: BLE001
                 state_store.log("mqtt", "reconexion", str(e))

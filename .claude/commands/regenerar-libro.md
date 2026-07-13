@@ -19,8 +19,9 @@ Regenera el libro `Modelo_FEMSA_Ulogix_2026.xlsx` del repo hermano y valídalo:
    ```bash
    cd ../ulogix-fontibon-suite && python core/finanzas_negocio.py
    ```
-   Referencia: CAPEX ~$22.216 M · VPN ~$8.033 M · TIR ~36.6 % · ROI ~103.8 % ·
-   payback 33/42 m. Si no coinciden, hay una fórmula mal — **no entregues el
+   Referencia (2026-07, CAPEX recortado — decisión #15 de CLAUDE.md): CAPEX
+   ~$12.188 M · VPN ~$16.661 M · TIR ~85.7 % · ROI ~253.1 % · payback
+   21/24 m. Si no coinciden, hay una fórmula mal — **no entregues el
    archivo**, arregla el generador.
 
 4. Verifica también que `Balance!` fila de chequeo dé 0 en los 60 meses.

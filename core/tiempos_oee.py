@@ -20,9 +20,26 @@ Datos corregidos clave:
   daria U=1.61 -> la celda robotica es la que evita el 2do operario.
 - Lote Q = produccion de UN turno redondeada a pallets: 262,440 / 73,080 /
   2,880 und (162 / 87 / 96 pallets). Tsu = 70 min.
-Mejora de OEE a implementar: +5% relativo, justificado por componente
-(+2.0 pp disponibilidad celdas/MTTR · +1.2 pp rendimiento retrofit llenadoras
-· +0.7 pp calidad inspeccion). Meta de programa: >= 86%.
+- MLT (lote-turno, VSM estacion-por-estacion del archivo corregido): L1
+  16.98 h · **L2 19.26 h · L3 15.57 h** (corregido 2026-07: el modulo tenia
+  16.44/14.9, valores que no coincidian con el archivo fuente
+  'Tiempos_Fontibon_Corregido.xlsx', hoja MLT_VSM — bug real, no solo
+  redondeo, ya corregido).
+
+Mejora de OEE a implementar: **+5% relativo, EXACTO, por linea** (no una
+cifra plana aproximada) — `oee_a_implementar = oee_base * 1.05` para cada
+linea. El delta en puntos porcentuales que eso exige es LIGERAMENTE distinto
+por linea porque cada una parte de un OEE base distinto (L1 +3.856pp, L2
++3.825pp, L3 +3.769pp — ver `MEJORA_PP_POR_LINEA`), repartido 50/30/20% entre
+disponibilidad/rendimiento/calidad (celdas roboticas de paletizado eliminan
+microparos y bajan MTTR -> disponibilidad; retrofit de llenadoras estabiliza
+SE/RE -> rendimiento; reasignacion de inspectoras HEUFT/Linatronic ya
+existentes entre L1<->L2, capex-cero, ver 'Maquinas_Referencias' del archivo
+fuente -> calidad). El +5% se alcanza al cierre del mes 4 de preoperacion
+(ver `CRONOGRAMA_MEJORA_OEE`, atado a las 4 fases de CAPEX de
+`core/finanzas_negocio.py: FASES_CAPEX`). La meta aspiracional de programa
+(>=86%) queda documentada aparte: es un techo de largo plazo, NO la meta del
++5% estricto del caso de negocio actual — no confundir ambas.
 """
 from __future__ import annotations
 
@@ -45,16 +62,48 @@ DATOS = {
     "L2": dict(producto="QuAtro 1.5 L PET NR", sku="P2-QT1500-PET",
                rp_nominal=12000, rp_diseno=13000, turnos=2, horas_turno=8,
                dias_ano=286, und_pallet=840, q_lote=73080, pallets_lote=87,
-               re_microparos=0.931506, mlt_lote_h=16.44),
+               re_microparos=0.931506, mlt_lote_h=19.258142),
     "L3": dict(producto="Garrafon 25 L retornable", sku="P3-GARR25L",
                rp_nominal=480, rp_diseno=520, turnos=1, horas_turno=8,
                dias_ano=120, und_pallet=30, q_lote=2880, pallets_lote=96,
-               re_microparos=0.917808, mlt_lote_h=14.9),
+               re_microparos=0.917808, mlt_lote_h=15.573906),
 }
 TT, TIP, TNP, TSU_MIN, Q_CALIDAD = 8.0, 1.1667, 0.75, 70, 0.99932
-MEJORA_PP = {"disponibilidad": 2.0, "rendimiento": 1.2, "calidad": 0.7}
+# reparto 50/30/20% del Δpp EXACTO que cada linea necesita para llegar a
+# oee_base*1.05 (calculado en _mejora_pp_linea() -- no una cifra plana igual
+# para las 3 lineas, porque cada una parte de un oee_base distinto)
+REPARTO_MEJORA = {"disponibilidad": 0.50, "rendimiento": 0.30, "calidad": 0.20}
+CRONOGRAMA_MEJORA_OEE = [
+    # (fase, mes_preop, capex_pct_fase, palanca, componente_oee, detalle)
+    (1, 1, 0.20, "Ingenieria de detalle + pedidos de celdas roboticas y llenadoras",
+     None, "Sin ganancia de OEE aun -- fase de ingenieria/procura."),
+    (2, 2, 0.35, "Instalacion y comisionamiento de celdas roboticas de paletizado (L1-L2/L3)",
+     "disponibilidad", "Elimina microparos y esperas del paletizado manual; baja MTTR "
+     "(monitoreable por UNS/MES) -> gana el componente de disponibilidad."),
+    (3, 3, 0.27, "Retrofit de llenadoras (Modulfill/Contiform)",
+     "rendimiento", "Estabiliza la velocidad real vs nominal (SE) y reduce microparos "
+     "de llenado (RE) -> gana el componente de rendimiento."),
+    (4, 4, 0.18, "Reasignacion de inspectoras existentes (HEUFT PRIME L2->L1, "
+     "Linatronic 713 L1->L2, capex-cero) + arranque operativo pleno",
+     "calidad", "Reduce scrap/reprocesos -> gana el componente de calidad. Al cierre "
+     "de esta fase (mes 4 de preoperacion) el +5% relativo queda completo, "
+     "justo antes de la rampa operativa del mes 5 (RAMPA_MES5 del modelo financiero)."),
+]
 NOTA_UNS = ("KPIs vivos de OEE/TEEP: NO se gestionan en el ERP; llegan por "
             "MQTT segun el UNS (FEMSA/+/MES/KPI/#).")
+
+
+def _mejora_pp_linea(linea: str, factor: float = 1.05) -> dict:
+    """Delta en pp EXACTO que la linea necesita para llegar a oee_base*factor,
+    repartido segun REPARTO_MEJORA entre disponibilidad/rendimiento/calidad."""
+    base = componentes_oee(linea)["OEE"]
+    delta_pp = (base * factor - base) * 100
+    return {
+        "delta_total_pp": delta_pp,
+        "disponibilidad_pp": delta_pp * REPARTO_MEJORA["disponibilidad"],
+        "rendimiento_pp": delta_pp * REPARTO_MEJORA["rendimiento"],
+        "calidad_pp": delta_pp * REPARTO_MEJORA["calidad"],
+    }
 
 
 def _params() -> dict:
@@ -118,28 +167,37 @@ def tabla_tiempos(demanda_mensual: pd.DataFrame | None = None) -> pd.DataFrame:
 
 
 def tabla_oee() -> pd.DataFrame:
-    """OEE bottom-up (documental) + mejora +5% justificada + meta 86%."""
+    """OEE bottom-up (documental) + mejora +5% relativo EXACTO por linea
+    (no una cifra plana) + meta aspiracional 86% (largo plazo, distinta del
+    +5% estricto del caso de negocio actual)."""
     p = _params()
     factor = p.get("mejora_oee", {}).get("factor", 1.05)
     meta = p.get("mejora_oee", {}).get("meta_programa_oee", 0.86)
     filas = []
     for lin in LINEAS:
         d, c = DATOS[lin], componentes_oee(lin)
+        m = _mejora_pp_linea(lin, factor)
+        oee_impl = c["OEE"] * factor
         filas.append(dict(
             linea=lin, producto=d["producto"],
             A_disponibilidad=round(c["A"], 4), SE_tasa=round(c["SE"], 4),
             RE_microparos=round(c["RE"], 4), PE_desempeno=round(c["PE"], 4),
             Q_calidad=Q_CALIDAD, oee_base=round(c["OEE"], 4),
             carga_calendario=round(c["carga"], 4), teep=round(c["TEEP"], 4),
-            mejora_disponibilidad_pp=MEJORA_PP["disponibilidad"],
-            mejora_rendimiento_pp=MEJORA_PP["rendimiento"],
-            mejora_calidad_pp=MEJORA_PP["calidad"],
-            oee_a_implementar=round(c["OEE"] * factor, 4),
+            mejora_disponibilidad_pp=round(m["disponibilidad_pp"], 3),
+            mejora_rendimiento_pp=round(m["rendimiento_pp"], 3),
+            mejora_calidad_pp=round(m["calidad_pp"], 3),
+            mejora_total_pp=round(m["delta_total_pp"], 3),
+            oee_a_implementar=round(oee_impl, 4),
             meta_programa_oee=meta,
-            justificacion=("+2.0pp A: celdas roboticas eliminan microparos del "
-                           "paletizado manual y bajan MTTR (UNS/MES) | +1.2pp "
-                           "SE/RE: retrofit de llenadoras | +0.7pp Q: "
-                           "inspeccion HEUFT/vision"),
+            justificacion=(
+                f"+{m['disponibilidad_pp']:.2f}pp A: celdas roboticas de paletizado "
+                "eliminan microparos y bajan MTTR (UNS/MES) | "
+                f"+{m['rendimiento_pp']:.2f}pp SE/RE: retrofit de llenadoras | "
+                f"+{m['calidad_pp']:.2f}pp Q: reasignacion de inspectoras existentes "
+                "HEUFT/Linatronic (capex-cero, ver Maquinas_Referencias) -- suma "
+                f"{m['delta_total_pp']:.3f}pp = exactamente +5% relativo "
+                f"({c['OEE']*100:.2f}% -> {oee_impl*100:.2f}%)"),
         ))
     return pd.DataFrame(filas)
 

@@ -127,10 +127,14 @@ misma sesión** de openpyxl (un libro sin hojas visibles no se puede guardar).
 
 ## Base ERP (SQLite WAL)
 
-`integrations/state_store.py` — 8 tablas: `pronosticos`, `plan_compras`,
+`integrations/state_store.py` — 10 tablas: `pronosticos`, `plan_compras`,
 `inventario_politicas`, `po_tracking`, `venta_tracking`, `eventos_produccion`,
-`kpi_uns`, `log_acciones`. Docker la monta como volumen para que sobreviva
-reinicios. Navegable en la página 8 del dashboard.
+`kpi_uns`, `inventario_stock`, `movimientos_stock`, `log_acciones`.
+`inventario_stock` es el saldo ACTUAL de producto terminado/materia prima
+(se mueve con cada avance real de producción, no solo al cerrar una orden —
+ver decisión #16 de CLAUDE.md); `movimientos_stock` es su bitácora. Docker
+monta la base como volumen para que sobreviva reinicios. Navegable en la
+página 8 del dashboard.
 
 ## Diagnóstico
 
@@ -140,22 +144,26 @@ en Sheets + lectura de `Parametros`. Cada error muestra causa y remedio. La
 **página 9 (Ventas y Facturación)** muestra en pantalla (no solo en el log)
 cuando falla la entrega o la factura de una orden de venta/compra.
 
-## RRHH (roster de empleados)
+## RRHH (roster + resumen por rol, centralizados en hoja `RRHH`)
 
-`integrations/rrhh_client.py` — hoja `Empleados` (roster individual) +
-fallback `data/empleados.csv`, conexión propia a gspread (no reusa
-`sheets_client.Contabilidad`, porque `Empleados` no tiene rangos fijos ni
-fórmulas dependientes: se puede `clear`+`append` sin problema).
-`leer_empleados()` / `publicar_empleados(df)` / `agregar_empleado(**campos)`.
+2026-07: `Personal` (agregado) + `Empleados` (detalle) se consolidaron en
+UNA hoja `RRHH`, con 4 secciones marcadas (RESUMEN POR ROL / ROSTER
+INDIVIDUAL / TASAS DE CARGA PRESTACIONAL / RECONCILIACIÓN) — ver decisión
+#17 de `CLAUDE.md`. `integrations/rrhh_client.py` — conexión propia a
+gspread (no reusa `sheets_client.Contabilidad`), lee cada sección por
+nombre (mismo patrón que `leer_capex()`), y **siempre reconstruye la hoja
+completa al escribir** (el resumen se deriva del roster, no tiene sentido
+editar solo un pedazo). Fallback `data/empleados.csv` para el roster.
+`leer_empleados()` / `publicar_empleados(df)` / `agregar_empleado(**campos)`
+/ `leer_nomina_personal()` (lee la sección RESUMEN, solo lectura).
 
-**No confundir con la hoja `Personal`** (agregado por rol que ya gobierna
-`NOMINA_OPERACION_MES`/`NOMINA_IMPLEMENTACION_MES` en `Parametros` — ver
-skill `modelo-financiero-ulogix`). `rrhh_client.leer_nomina_personal()` lee
-`Personal` en modo **solo lectura** (nunca escribe ahí) para que
-`core/rrhh.py: reconciliar_con_personal()` compare el roster individual
-contra ese agregado — la página **10 (RRHH)**, sección 3, muestra si
-cuadran. Cada persona tiene un `rol_personal` que debe coincidir con las
-categorías de `Personal` para que la reconciliación tenga sentido.
+`core/rrhh.py: reconciliar_con_personal()` compara el roster contra el
+resumen — la página **10 (RRHH)**, sección 3, muestra si cuadran. Cada
+persona tiene un `rol_personal` que debe coincidir con las categorías del
+resumen. `core/rrhh.py` también trae la carga prestacional colombiana de
+referencia (`COMPONENTES_PRESTACIONALES_COMUNES`/`ARL_POR_CLASE`/
+`desglosar_costo_empleador()`) — `salario_mensual_cop` del roster es el
+costo total empleador YA cargado, no el salario base.
 
 ## Seguridad
 

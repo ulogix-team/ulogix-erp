@@ -15,12 +15,15 @@ from integrations import rrhh_client
 
 theme.preparar_pagina("RRHH", "🧑‍🤝‍🧑")
 theme.encabezado("RRHH · DOTACION Y NOMINA",
-                 "Roster individual vinculado a Google Sheets",
-                 "Cada persona vive en la hoja **Empleados** del libro (o en "
-                 "`data/empleados.csv` si Sheets no esta configurado). Es el "
-                 "detalle individual de la hoja **Personal** (agregado por rol "
-                 "que ya usa el motor financiero via `NOMINA_OPERACION_MES` / "
-                 "`NOMINA_IMPLEMENTACION_MES`) — abajo se reconcilian ambas.")
+                 "Roster individual + resumen por rol, centralizados en una hoja",
+                 "Todo vive en la hoja **RRHH** del libro (o en "
+                 "`data/empleados.csv` si Sheets no esta configurado): el roster "
+                 "individual, el resumen agregado por rol (el que alimenta al "
+                 "motor financiero via `NOMINA_OPERACION_MES` / "
+                 "`NOMINA_IMPLEMENTACION_MES` en la hoja `Parametros`), la tabla "
+                 "de tasas de carga prestacional (ARL/EPS/pensión/parafiscales/"
+                 "prestaciones — de referencia, ver la hoja) y la reconciliación "
+                 "entre ambas vistas.")
 
 if st.button("🔄 Refrescar desde Sheets"):
     st.cache_data.clear()
@@ -76,12 +79,12 @@ else:
 st.divider()
 
 # ------------------------------------------------------------------ reconciliacion
-st.subheader("3 · ⚖️ Reconciliación contra la hoja Personal")
+st.subheader("3 · ⚖️ Reconciliación contra el resumen por rol")
 nomina_personal = rrhh_client.leer_nomina_personal()
 if nomina_personal is None:
-    st.info("No se pudo leer la hoja **Personal** del libro (Sheets no conectado, o "
-            "la hoja no tiene el formato esperado). La reconciliación solo compara "
-            "el roster contra sí mismo hasta que haya conexión real.")
+    st.info("No se pudo leer la sección RESUMEN de la hoja **RRHH** del libro (Sheets "
+            "no conectado, o la hoja no tiene el formato esperado). La reconciliación "
+            "solo compara el roster contra sí mismo hasta que haya conexión real.")
 else:
     rec = rrhh.reconciliar_con_personal(
         df, nomina_personal.get("nomina_operacion_mes", 0.0),
@@ -105,9 +108,10 @@ else:
                      f"({rec['implementacion_diferencia_cop']:+,.0f})",
                      delta_color="off" if ok else "inverse")
     if not (rec["operacion_reconciliado"] and rec["implementacion_reconciliado"]):
-        st.caption("La diferencia significa que alguien editó el roster individual "
-                  "(Empleados) o el agregado (Personal) sin actualizar el otro — "
-                  "corrígelo a mano en Sheets.")
+        st.caption("La diferencia significa que el roster individual y el resumen "
+                  "por rol de la hoja RRHH se desincronizaron — vuelve a correr "
+                  "`python tools/actualizar_rrhh.py` para reconstruir el resumen "
+                  "desde el roster actual.")
 
 st.divider()
 
@@ -166,8 +170,11 @@ with st.form("nuevo_empleado"):
             st.cache_data.clear()
             st.rerun()
 
-with st.expander("Contrato de la hoja Empleados"):
+with st.expander("Contrato de la hoja RRHH (sección ROSTER INDIVIDUAL)"):
     st.code(", ".join(rrhh_client.COLUMNAS), language="text")
-    st.caption("Sin rangos fijos ni fórmulas dependientes: se puede reemplazar completa "
-              "(clear + append) o agregar filas sueltas sin romper nada, a diferencia de "
+    st.caption("`salario_mensual_cop` es el costo total empleador (ya con carga "
+              "prestacional) — la sección TASAS DE CARGA PRESTACIONAL de la hoja "
+              "documenta el desglose. Cada cambio al roster reconstruye la hoja "
+              "completa (el resumen por rol se deriva del roster, no es un dato "
+              "aparte) — no tiene fórmulas dependientes de rangos fijos como "
               "`Demanda`/`DemandaEscenario`/`Inventarios`.")

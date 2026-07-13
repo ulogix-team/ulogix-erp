@@ -43,7 +43,7 @@ Sheets** de la página Finanzas para forzarlo al instante):
 | Financiero | `Parametros` (pares clave-valor: TRM, TMAR, nómina, otros fijos, vidas útiles, unit economics por SKU...) | **Sheets → ERP** | `leer_parametros()` | pares clave-valor, cualquier fila |
 | Financiero | `CAPEX` (tabla: sección, línea, activo, cantidad, moneda, costo_unitario, vida_años, categoría_dep) | **Sheets → ERP** | `leer_capex()` | tabla, encabezado reconocido por nombre de columna |
 | Financiero | `Licencias` (`CAPEX software capitalizable`, `OPEX mensual licencias` — última celda no vacía de la fila) | **Sheets → ERP** | `leer_licencias()` | filas etiquetadas, sin columna fija |
-| RRHH | `Empleados` (roster individual — ver `integrations/rrhh_client.py`) | ERP → Sheets *(alta)* / **Sheets → ERP** *(lectura)* | `leer_empleados()` / `publicar_empleados()` / `agregar_empleado()` | reemplazo o append, sin fórmulas dependientes |
+| RRHH | `RRHH` (roster + resumen por rol + tasas, consolidada — ver `integrations/rrhh_client.py`) | ERP → Sheets *(alta)* / **Sheets → ERP** *(lectura)* | `leer_empleados()` / `publicar_empleados()` / `agregar_empleado()` | reconstrucción completa (el resumen se deriva del roster), sin fórmulas dependientes |
 | Financiero | `APU_Ingenieria` (costos de ingeniería que cobra ULogix, justificados por AIU) | ERP → Sheets | `tools/publicar_apu_ingenieria.py` (escribe) / `leer_apu_ingenieria()` (lee, solo exhibición) | reemplazo, sin fórmulas dependientes |
 
 **Formato numérico del libro real: colombiano, no inglés.** Punto = separador
@@ -124,9 +124,11 @@ Los rangos **fijos** de `Demanda`/`DemandaEscenario`/`Inventarios` existen
 porque las hojas financieras (`ER_Proyecto`, `Flujo_Caja`, `Balance`,
 `FinancieroEscenario`, `Inventarios·rotación`) referencian esas celdas con
 fórmulas: la app escribe posicionalmente sin romperlas — eso **no cambió**.
-**`Tiempos` y `OEE_TEEP` son DOCUMENTALES** (referencia de ingeniería del
-estudio corregido, no conectadas) y **el ERP no gestiona OEE/TEEP**: esos
-KPIs solo llegan por MQTT según el UNS a `KPIs_UNS`.
+**`Tiempos` es DOCUMENTAL** (referencia de ingeniería del estudio corregido,
+consolidada 2026-07 — incluye OEE/TEEP, `OEE_TEEP` ya no existe como hoja
+aparte, ver decisión #17 — no conectada al ERP en vivo) y **el ERP no
+gestiona OEE/TEEP**: esos KPIs solo llegan por MQTT según el UNS a
+`KPIs_UNS`.
 Si el ID no está configurado, todo cae a un Excel local
 (`data/contabilidad_local.xlsx`) con la misma estructura: cero pérdida — y el
 motor financiero da exactamente los mismos números que con sus constantes
@@ -188,6 +190,27 @@ PO↔MO (`mo_id`/`mo_name`) para que el middleware sepa cuál validar — ver
 §3 (MQTT) para el detalle de cómo `AvailableQuantity` dispara esa validación,
 solo una orden activa por línea/SKU a la vez. Sin credenciales la suite opera
 en `dry-run` y registra todo en SQLite.
+
+**Inventario en vivo, no solo al cerrar la orden.** Cada `INTERVALO_SYNC_ODOO`
+(60 s), `OdooClient.avanzar_produccion_parcial()` postea a Odoo el avance
+acumulado desde el último sync usando el mecanismo nativo de **backorder**
+de `mrp.production`: fija `qty_producing` parcial, marca los `stock.move` de
+componentes recogidos en esa proporción y llama `button_mark_done` — con
+`qty_producing < product_qty` esto no cierra la orden sino que dispara el
+wizard `mrp.production.backorder`, que se completa por RPC con
+`to_backorder=True`. La orden original queda `done` solo por esa porción
+(BOM descontada, terminado entrado) y Odoo crea automáticamente una MO
+backorder por el remanente (mismo `origin`) que sigue abierta. El cierre
+final de la orden (cuando `AvailableQuantity` alcanza el objetivo) sigue
+usando `completar_orden_fabricacion` tal cual, sin backorder. Verificado en
+vivo contra Odoo real (saas-19.3): una cadena de varios avances parciales +
+cierre final suma exacto al objetivo, cada tramo con su propio `stock.move`
+`done`. Nota: la respuesta XML-RPC de `action_backorder` puede traer un
+`Fault` de marshalling ("cannot marshal None") aunque la operación sí se
+ejecutó en el servidor — el cliente no confía en esa respuesta, relee el
+estado de la MO para confirmar. El ERP local espeja el mismo movimiento de
+inmediato (sin esperar el sync a Odoo) en `state_store.inventario_stock` —
+ver §5.
 
 **Idempotencia.** `crear_orden_compra`, `crear_orden_fabricacion` y
 `crear_orden_venta` buscan primero una orden **no cancelada** con la misma
@@ -302,24 +325,73 @@ relectura inmediata sin esperar el TTL de 60 s.
 
 ---
 
-## 5 · RRHH (roster de empleados)
+## 5 · Inventario en vivo (ERP local)
 
-`integrations/rrhh_client.py` gestiona la hoja `Empleados` (roster individual)
-como una integración separada de `sheets_client.Contabilidad` — no comparte
-código porque no tiene rangos fijos ni fórmulas dependientes (se puede
-`clear`+`append` sin romper nada, a diferencia de `Demanda`/`Inventarios`).
+`integrations/state_store.py`, tablas `inventario_stock` (saldo ACTUAL, no
+histórico) y `movimientos_stock` (bitácora). A diferencia de Odoo (§2), que
+solo mueve stock al validar una `mrp.production` — completa o por backorder
+parcial —, el ERP local se mueve con **cada** reporte real de producción, sin
+esperar ningún sync:
 
-**No confundir con la hoja `Personal`** (agregado por rol: conteo, costo
-unitario, costo total, fase — la que ya gobierna `NOMINA_OPERACION_MES`/
-`NOMINA_IMPLEMENTACION_MES` en `Parametros`, ver §1). `Empleados` es el
-detalle persona por persona; cada fila tiene un `rol_personal` que debe
-coincidir con las categorías de `Personal` para que la página **RRHH**
-pueda reconciliar ambas (`core.rrhh.reconciliar_con_personal`,
-`rrhh_client.leer_nomina_personal()` — lee `Personal` en modo solo lectura,
-nunca escribe ahí). Si un usuario agrega/quita gente en `Empleados` sin
-actualizar el conteo/costo en `Personal` (o viceversa), la página lo marca
-como descuadrado.
+- `state_store.actualizar_disponible()`/`acumular_produccion()` (el camino
+  de `AvailableQuantity`/`GoodCount`, ver §3) llaman
+  `_aplicar_produccion_a_stock(sku, delta_unidades, referencia)` en cada
+  avance: suma `delta_unidades` al producto terminado (`ajustar_stock
+  ("producto", sku, ...)`) y resta de cada componente de `data/bom.csv` la
+  cantidad proporcional (`cantidad_por_unidad * delta_unidades`,
+  `ajustar_stock("componente", ...)`).
+- Página **Órdenes Odoo**: al recibirse una PO de insumos
+  (`res.get("recibida")`), suma cada línea del pedido a la materia prima
+  (`motivo="recepcion_po"`).
+- Página **Ventas y Facturación**: al entregarse una venta
+  (`res.get("entregada")`), resta la cantidad vendida del producto terminado
+  (`motivo="venta_entrega"`).
 
-Columnas de `Empleados`: `cedula, nombre, cargo, rol_personal, linea, turno,
-fase, fecha_ingreso, estado, salario_mensual_cop, telefono, email`. Fallback
+`state_store.ajustar_stock(tipo, codigo, delta, motivo, ...)` es el único
+punto de escritura — upsert en `inventario_stock` + fila en
+`movimientos_stock` con el saldo resultante, para auditoría. Vista en vivo:
+página **Inventario**, sección "📊 Stock actual (tiempo real)" (métricas de
+producto terminado por SKU, tabla de materia prima con alerta si algún
+componente queda en negativo — señal de que se produjo sin haber registrado
+suficiente insumo recibido — y bitácora de movimientos). Ambas tablas nuevas
+están en `state_store.TABLAS_ERP`, navegables también desde la página **Base
+de datos**.
+
+---
+
+## 6 · RRHH (roster + resumen por rol, centralizados)
+
+`integrations/rrhh_client.py` gestiona la hoja **`RRHH`** (2026-07: antes
+`Personal` + `Empleados` separadas, consolidadas por pedido explícito del
+dueño del proyecto — ver decisión #17 de `CLAUDE.md`) — integración separada
+de `sheets_client.Contabilidad`, no comparte código.
+
+La hoja tiene 4 secciones marcadas, localizadas por nombre (mismo patrón que
+`leer_capex()`/`leer_apu_ingenieria()`, no por rango fijo):
+- **RESUMEN POR ROL**: agregado por rol/fase (conteo, ARL clase, salario
+  base estimado, costo total — el que gobierna `NOMINA_OPERACION_MES`/
+  `NOMINA_IMPLEMENTACION_MES` en `Parametros`, ver §1). Se **deriva** del
+  roster, no es un dato independiente.
+- **ROSTER INDIVIDUAL**: detalle persona por persona (antes hoja
+  `Empleados`); cada fila tiene un `rol_personal` que debe coincidir con las
+  categorías del RESUMEN para reconciliar (`core.rrhh.
+  reconciliar_con_personal`).
+- **TASAS DE CARGA PRESTACIONAL**: componentes de nómina colombiana de
+  referencia (EPS, pensión, caja, cesantías, intereses, prima, vacaciones,
+  ARL por clase de riesgo — `core/rrhh.py:
+  COMPONENTES_PRESTACIONALES_COMUNES`/`ARL_POR_CLASE`) — banda de mercado a
+  validar contra la normativa vigente, no una tarifa fijada por ley.
+- **RECONCILIACIÓN**: roster vs. resumen, por fase.
+
+`rrhh_client.publicar_empleados()`/`agregar_empleado()` **siempre
+reconstruyen la hoja completa** (`construir_filas_rrhh()`) porque el
+RESUMEN se deriva del roster — no tiene sentido editar solo un pedazo.
+`leer_nomina_personal()` lee la sección RESUMEN en modo solo lectura, nunca
+escribe ahí directamente (solo vía la reconstrucción completa).
+
+Columnas del roster: `cedula, nombre, cargo, rol_personal, linea, turno,
+fase, fecha_ingreso, estado, salario_mensual_cop, telefono, email` —
+`salario_mensual_cop` es el **costo total empleador** (ya con carga
+prestacional), no el salario base; el desglose vive en la sección de tasas.
+Fallback
 sin Sheets: `data/empleados.csv` (mismo esquema).

@@ -23,10 +23,25 @@ Tablas:
                        vinculadas al lote de fabricacion vendido (mo_name).
                        La pagina *Ventas y Facturacion* la llena al crear cada
                        SO; estado refleja creada/entregada/facturada/error.
+- inventario_stock   : saldo ACTUAL (no historico) de producto terminado y de
+                       materia prima, por codigo (SKU o componente de
+                       data/bom.csv). Es el inventario "en vivo" del ERP local
+                       -- se mueve con cada evento real, no solo al cerrar una
+                       orden: `actualizar_disponible()` suma cada avance
+                       incremental de `AvailableQuantity` al producto
+                       terminado y resta el consumo de BOM proporcional de
+                       cada componente (`ajustar_stock`); la recepcion de una
+                       PO de insumos (pagina *Ordenes Odoo*) suma materia
+                       prima; la entrega de una venta (pagina *Ventas y
+                       Facturacion*) resta producto terminado.
+- movimientos_stock  : bitacora de cada `ajustar_stock()` (delta + motivo +
+                       referencia + saldo resultante) -- auditoria de
+                       `inventario_stock`.
 - log_acciones       : auditoria (creaciones en Odoo, dry-runs, errores).
 """
 from __future__ import annotations
 
+import csv
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -56,7 +71,8 @@ CREATE TABLE IF NOT EXISTS po_tracking (
     creado_ts TEXT NOT NULL, actualizado_ts TEXT NOT NULL,
     detalle TEXT,
     mo_id INTEGER, mo_name TEXT,             -- mrp.production vinculada (BOM del sku)
-    insumos_recibidos INTEGER NOT NULL DEFAULT 0  -- PO de insumos ya recibida en Odoo
+    insumos_recibidos INTEGER NOT NULL DEFAULT 0,  -- PO de insumos ya recibida en Odoo
+    qty_sincronizada_odoo REAL NOT NULL DEFAULT 0  -- avance ya posteado en Odoo (backorders)
 );
 CREATE TABLE IF NOT EXISTS venta_tracking (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +116,21 @@ CREATE TABLE IF NOT EXISTS kpi_uns (
     ts TEXT NOT NULL, linea TEXT NOT NULL, rama TEXT NOT NULL,
     kpi TEXT NOT NULL, valor_num REAL, valor_txt TEXT, topic TEXT
 );
+CREATE TABLE IF NOT EXISTS inventario_stock (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tipo TEXT NOT NULL,               -- 'producto' (terminado) | 'componente' (materia prima)
+    codigo TEXT NOT NULL,             -- SKU o codigo de componente (data/bom.csv)
+    descripcion TEXT, uom TEXT,
+    cantidad REAL NOT NULL DEFAULT 0,
+    actualizado_ts TEXT NOT NULL,
+    UNIQUE(tipo, codigo)
+);
+CREATE TABLE IF NOT EXISTS movimientos_stock (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL, tipo TEXT NOT NULL, codigo TEXT NOT NULL,
+    delta REAL NOT NULL, motivo TEXT NOT NULL,   -- produccion|consumo_bom|recepcion_po|venta_entrega|ajuste
+    referencia TEXT, saldo_resultante REAL
+);
 """
 
 
@@ -111,6 +142,7 @@ _COLUMNAS_NUEVAS_PO_TRACKING = {
     "mo_id": "INTEGER",
     "mo_name": "TEXT",
     "insumos_recibidos": "INTEGER NOT NULL DEFAULT 0",
+    "qty_sincronizada_odoo": "REAL NOT NULL DEFAULT 0",
 }
 
 
@@ -142,6 +174,84 @@ def log(origen: str, accion: str, detalle: str = "") -> None:
     with conexion() as con:
         con.execute("INSERT INTO log_acciones (ts, origen, accion, detalle) VALUES (?,?,?,?)",
                     (_ahora(), origen, accion, detalle))
+
+
+# ------------------------------------------------------------------ inventario en vivo
+_BOM_CACHE: dict[str, list[dict]] | None = None
+
+
+def _bom_por_producto() -> dict[str, list[dict]]:
+    """`data/bom.csv` agrupado por SKU (componente, descripcion, uom,
+    cantidad_por_unidad) -- fuente de las razones de consumo para restar
+    materia prima cuando avanza la produccion de un SKU. Cache en memoria
+    del proceso (el CSV no cambia en caliente)."""
+    global _BOM_CACHE
+    if _BOM_CACHE is None:
+        _BOM_CACHE = {}
+        ruta = settings.DATA_DIR / "bom.csv"
+        if ruta.exists():
+            with open(ruta, encoding="utf-8") as f:
+                for fila in csv.DictReader(f):
+                    _BOM_CACHE.setdefault(fila["producto"], []).append(fila)
+    return _BOM_CACHE
+
+
+def ajustar_stock(tipo: str, codigo: str, delta: float, motivo: str,
+                  descripcion: str = "", uom: str = "", referencia: str = "") -> float:
+    """Ajusta (delta +/-) el saldo ACTUAL de `inventario_stock` para
+    tipo='producto' (terminado, codigo=SKU) o 'componente' (materia prima,
+    codigo=data/bom.csv). Dejar registro en `movimientos_stock`. Devuelve el
+    saldo resultante. `descripcion`/`uom` solo se escriben si vienen no
+    vacias (no pisan lo ya guardado con valores vacios de llamadas
+    posteriores que no las traen)."""
+    with conexion() as con:
+        row = con.execute("SELECT cantidad FROM inventario_stock WHERE tipo=? AND codigo=?",
+                          (tipo, codigo)).fetchone()
+        nueva = round((row["cantidad"] if row else 0.0) + delta, 6)
+        con.execute(
+            "INSERT INTO inventario_stock (tipo, codigo, descripcion, uom, cantidad,"
+            " actualizado_ts) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(tipo, codigo) DO UPDATE SET cantidad=excluded.cantidad,"
+            " actualizado_ts=excluded.actualizado_ts,"
+            " descripcion=CASE WHEN excluded.descripcion!='' THEN excluded.descripcion"
+            "              ELSE inventario_stock.descripcion END,"
+            " uom=CASE WHEN excluded.uom!='' THEN excluded.uom ELSE inventario_stock.uom END",
+            (tipo, codigo, descripcion, uom, nueva, _ahora()))
+        con.execute(
+            "INSERT INTO movimientos_stock (ts, tipo, codigo, delta, motivo, referencia,"
+            " saldo_resultante) VALUES (?,?,?,?,?,?,?)",
+            (_ahora(), tipo, codigo, delta, motivo, referencia, nueva))
+    return nueva
+
+
+def _aplicar_produccion_a_stock(sku: str, delta_unidades: float, referencia: str) -> None:
+    """Cada unidad reportada de avance real (delta positivo de
+    `AvailableQuantity`/`GoodCount`) entra al stock de producto terminado Y
+    consume la materia prima proporcional segun `data/bom.csv`
+    (cantidad_por_unidad) -- asi el inventario del ERP local se mueve **a
+    medida que se produce**, no solo cuando la orden completa cierra."""
+    if delta_unidades <= 0:
+        return
+    ajustar_stock("producto", sku, delta_unidades, "produccion", referencia=referencia)
+    for comp in _bom_por_producto().get(sku, []):
+        ratio = float(comp["cantidad_por_unidad"])
+        ajustar_stock("componente", comp["componente"], -delta_unidades * ratio,
+                      "consumo_bom", descripcion=comp["descripcion"], uom=comp["uom"],
+                      referencia=referencia)
+
+
+def stock_actual() -> list[dict]:
+    with conexion() as con:
+        rows = con.execute(
+            "SELECT * FROM inventario_stock ORDER BY tipo DESC, codigo").fetchall()
+    return [dict(r) for r in rows]
+
+
+def movimientos_stock_recientes(limit: int = 200) -> list[dict]:
+    with conexion() as con:
+        rows = con.execute("SELECT * FROM movimientos_stock ORDER BY id DESC LIMIT ?",
+                           (limit,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def registrar_evento(linea: str, sku: str, qty: float,
@@ -195,17 +305,50 @@ def actualizar_disponible(sku: str, disponible: float) -> dict | None:
     nunca disminuye) y valores que superen el objetivo se recortan a este.
     Devuelve la PO si quedo 'cumplida' en esta llamada (con qty_producida/
     estado ya actualizados), o None si no hubo avance real o no hay orden
-    activa para ese sku."""
+    activa para ese sku.
+
+    Cada avance real (aunque no complete la orden) entra de inmediato al
+    inventario local (`_aplicar_produccion_a_stock`): producto terminado
+    sube, materia prima baja segun la BOM -- el stock del ERP se mueve **a
+    medida que se produce**, no solo cuando la orden cierra."""
     po = orden_activa(sku)
     if po is None or disponible <= po["qty_producida"] + 1e-9:
         return None
     nueva = min(disponible, po["qty_objetivo"])
+    delta = nueva - po["qty_producida"]
     cumplida = nueva >= po["qty_objetivo"] - 1e-9
     with conexion() as con:
         con.execute("UPDATE po_tracking SET qty_producida=?, estado=?, actualizado_ts=? "
                     "WHERE id=?",
                     (nueva, "cumplida" if cumplida else "abierta", _ahora(), po["id"]))
+    _aplicar_produccion_a_stock(sku, delta, referencia=po["po_name"])
     return dict(po) | {"qty_producida": nueva, "estado": "cumplida"} if cumplida else None
+
+
+def pos_para_sincronizar_odoo(minimo_delta: float = 1e-6) -> list[dict]:
+    """Ordenes 'abierta' cuyo avance local (`qty_producida`, lo que reporto
+    el MES) ya supera lo posteado en Odoo (`qty_sincronizada_odoo`, lo ultimo
+    que se cerro alli via backorder) -- candidatas al sync periodico del
+    middleware (`avanzar_produccion_parcial`). Las 'cumplida'/'recibida_odoo'
+    quedan afuera a proposito: ese cierre final ya lo hace
+    `completar_orden_fabricacion` con TODO lo que reste, sin backorder."""
+    with conexion() as con:
+        rows = con.execute(
+            "SELECT * FROM po_tracking WHERE estado='abierta' "
+            "AND qty_producida > qty_sincronizada_odoo + ?", (minimo_delta,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def marcar_sincronizado_odoo(po_name: str, qty_sincronizada: float,
+                             mo_id: int, mo_name: str) -> None:
+    """Registra que Odoo ya quedo al dia hasta `qty_sincronizada` para esta
+    PO, y actualiza el puntero a la MO backorder actual (la que sigue
+    abierta para el siguiente avance o para el cierre final)."""
+    with conexion() as con:
+        con.execute("UPDATE po_tracking SET qty_sincronizada_odoo=?, mo_id=?, mo_name=?,"
+                    " actualizado_ts=? WHERE po_name=?",
+                    (qty_sincronizada, mo_id, mo_name, _ahora(), po_name))
+    log("odoo", "sync_parcial_odoo", f"{po_name}: {qty_sincronizada:g} un -> {mo_name}")
 
 
 def acumular_produccion(sku: str, qty: float, linea: str = "") -> list[dict]:
@@ -375,7 +518,7 @@ def kpis_actuales() -> list[dict]:
 
 TABLAS_ERP = ["pronosticos", "plan_compras", "inventario_politicas",
               "po_tracking", "venta_tracking", "eventos_produccion",
-              "kpi_uns", "log_acciones"]
+              "kpi_uns", "inventario_stock", "movimientos_stock", "log_acciones"]
 
 
 def leer_tabla(nombre: str, limit: int = 500) -> list[dict]:

@@ -30,7 +30,7 @@ editado por el usuario manda sobre esas constantes, no al revés.
                               MIDDLEWARE Ulogix ────► Odoo API (XML-RPC)
                                 │      ▲ publica retained FEMSA/…/ERP/#
                                 ▼      │
-                           SQLite ERP (8 tablas)
+                           SQLite ERP (10 tablas)
                                 │
                                 ▼
               DASHBOARD Streamlit ◄──► Google Sheets (libro en Drive)
@@ -58,9 +58,9 @@ nombres de servicio.
 | `integrations/mqtt_middleware.py` | Suscribe UNS, cumple POs, publica rama ERP retained |
 | `integrations/odoo_client.py` | XML-RPC; `LineaPedido(nombre, default_code, cantidad, precio_unitario)`; compras+fabricación+**ventas+facturación** (cliente y proveedor), todo idempotente por referencia |
 | `integrations/sheets_client.py` | gspread + **fallback a Excel local** |
-| `integrations/rrhh_client.py` | Roster de empleados: hoja `Empleados` de Sheets + fallback `data/empleados.csv` |
-| `integrations/state_store.py` | SQLite WAL, 8 tablas ERP |
-| `tools/verificacion.py` | **QA de 15 pasos — correr siempre antes de dar algo por bueno** |
+| `integrations/rrhh_client.py` | Roster + resumen por rol: hoja `RRHH` de Sheets (consolidada) + fallback `data/empleados.csv` |
+| `integrations/state_store.py` | SQLite WAL, 10 tablas ERP (incl. `inventario_stock`/`movimientos_stock`, stock en vivo) |
+| `tools/verificacion.py` | **QA de 17 pasos — correr siempre antes de dar algo por bueno** |
 | `tools/bootstrap_odoo.py` | Puebla Odoo desde cero (idempotente) |
 | `tools/simulador_produccion.py` | Publica KPIs y GoodCount al UNS |
 
@@ -94,7 +94,8 @@ nombres de servicio.
    está vacía/con encabezado distinto, o una celda no castea a número — el
    motor da los mismos resultados de siempre en ese caso (`tools/
    verificacion.py`, paso "Caso de negocio", sigue exigiendo
-   `payback_simple_meses == 33`). El generador del libro hermano
+   `payback_simple_meses == 21`, actualizado tras el recorte de alcance de
+   la decisión #15). El generador del libro hermano
    (`../femsa-modelo-financiero`) sigue importando esas constantes, pero ahora
    son solo el **seed** con el que se puebla el libro la primera vez, no la
    fuente de verdad en operación — no vuelvas a llamarlo "fuente única" en
@@ -115,9 +116,11 @@ nombres de servicio.
    parsea el formato colombiano, `leer_capex()` reconoce el encabezado real
    por nombre de columna (`activo / paquete`, `vida (años)`, con una columna
    extra `CAPEX COP` ya calculada que se ignora), y `leer_licencias()` lee
-   los dos totales de esa hoja. Verificado end-to-end: 25 filas de CAPEX
-   real leídas correctamente (vs. 24 del default local), VPN $8.059 M / TIR
-   36.7 % / ROI 104.0 % / payback 33 m con datos en vivo.
+   los dos totales de esa hoja. Verificado end-to-end tras el recorte de
+   alcance de la decisión #15: 84 filas de CAPEX real leídas correctamente
+   (antes 25 — sin lavadoras ni inspección de línea, celdas robóticas a
+   detalle de BOM real), VPN $16.661 M / TIR 85.7 % / ROI 253.1 % / payback
+   21 m con datos en vivo.
 4. **`t_ciclo_ideal` ≠ `t_ciclo`** y **takt ≠ tiempo de ciclo**. Errores
    conceptuales ya corregidos; no reintroducirlos.
 5. **Hilos BLAS en 1** (`OPENBLAS_NUM_THREADS=1` etc. en Dockerfile y compose):
@@ -244,6 +247,197 @@ nombres de servicio.
       `AvailableQuantity` localmente (sin MQTT, prueba la lógica al
       instante) o publicarlo de verdad al broker. `tools/verificacion.py`
       paso 16 cubre cola de 2 órdenes + ruido descendente + recorte.
+15. **2026-07: alcance del CAPEX recortado — sin lavadoras ni inspección de
+    línea; celdas robóticas a detalle de BOM real.** Pedido explícito del
+    dueño del proyecto: ya no se compran lavadoras/prewash retornables ni
+    equipos de inspección de línea (envase vacío/lleno, visión artificial).
+    Filas afectadas de `CAPEX` puestas en `cantidad=0` (no se borran, se
+    conserva el registro de qué se evaluó y excluyó — mismo patrón que ya
+    venía usando el usuario): `Upgrade lavadora retornable / prewash` (L2),
+    `Inspeccion envase vacio` (L2), `Bloc soplado-llenado-tapado` (L3),
+    `Inspeccion botella llena` (L3), `Lavado y sanitizacion garrafon` (L7).
+    La fila `Llenado / taponado / inspeccion garrafon` (L7) se **separó** en
+    dos filas — `Llenado / taponado garrafon` (activa) e `Inspeccion
+    garrafon` (`cantidad=0`) — mismo patrón que ya usaba el libro en L2/L3;
+    el precio de cada mitad es un supuesto documentado en el comentario junto
+    a `CAPEX_FILAS` en `core/finanzas_negocio.py` (garrafón es la línea más
+    lenta — 480 und/h — así que un chequeo de nivel de llenado es más simple
+    y barato que la inspección óptica de L2/L3; no hay desglose real del
+    proveedor). Las 2 filas resumen de `Celdas roboticas (BOM real)` (GANTRY
+    L1-L2 y ROBOT ARTICULADO L3) se **expandieron a 60 filas de detalle**
+    (36 + 24 ítems) a partir de las BOM de ingeniería reales de las celdas de
+    paletizado — cada fila es un componente con su fabricante/referencia; de
+    paso se corrigió la moneda de esas filas de `USD` a `USD*` (son
+    cotizaciones reales de la BOM, no un benchmark — no debían llevar el
+    factor `FACTOR_RFQ`). Publicado a Sheets con `tools/
+    actualizar_capex_celdas.py` (preserva el encabezado real, regenera la
+    fórmula de `CAPEX COP` por fila según moneda, y el pie de Subtotal/
+    Contingencia/Total). El caso de negocio mejoró sustancialmente porque el
+    EBITDA incremental es demand-driven (no cambia con el CAPEX) mientras el
+    CAPEX casi se redujo a la mitad — ver cifras nuevas en "Estado actual".
+16. **Inventario en vivo (ERP local + Odoo) — se mueve a medida que se
+    produce, no solo al cerrar la orden.** Pedido explícito: "tanto ODOO
+    como el ERP" deben mostrar productos/unidades/materia prima
+    actualizados con la producción real, no solo al completar un lote.
+    - **ERP local**: tabla nueva `state_store.inventario_stock` (+ bitácora
+      `movimientos_stock`). Cada avance real de `AvailableQuantity`/
+      `GoodCount` (`actualizar_disponible()`/`acumular_produccion()`) llama
+      `_aplicar_produccion_a_stock()`: suma producto terminado y resta
+      materia prima según `data/bom.csv` (`cantidad_por_unidad`) — no espera
+      a que la orden complete. La recepción de una PO de insumos (página
+      *Órdenes Odoo*) suma materia prima; la entrega de una venta (página
+      *Ventas y Facturación*) resta producto terminado. Vista en vivo:
+      página *Inventario*, sección "📊 Stock actual (tiempo real)".
+    - **Odoo**: cada `INTERVALO_SYNC_ODOO` (60 s, `mqtt_middleware.py`),
+      `sincronizar_parciales_odoo()` postea a Odoo el avance acumulado desde
+      el último sync usando el mecanismo **nativo de backorder** de
+      `mrp.production` (`odoo_client.avanzar_produccion_parcial`): fija
+      `qty_producing` parcial, marca los `stock.move` de componentes
+      recogidos en esa proporción, `button_mark_done` (que con
+      `qty_producing < product_qty` no cierra sino que dispara el wizard
+      `mrp.production.backorder`) y completa ese wizard con
+      `to_backorder=True` — la orden original queda `done` solo por esa
+      porción (descuenta BOM, entra terminado) y Odoo crea sola una MO
+      backorder por el remanente (mismo `origin`), que
+      `po_tracking.mo_id`/`mo_name` pasa a rastrear. El cierre FINAL de la
+      orden sigue siendo `completar_orden_fabricacion` (sin backorder, cubre
+      todo lo que reste) — no cambió. **Verificado en vivo contra Odoo
+      real** (saas-19.3): cadena de 4 avances parciales + cierre final suma
+      exacto al objetivo, cada tramo con su propio `stock.move` `done`. Nota
+      técnica: la respuesta XML-RPC de `action_backorder` a veces trae un
+      `Fault` de marshalling ("cannot marshal None") aunque la operación SI
+      se ejecutó — `avanzar_produccion_parcial` no confía en esa respuesta,
+      relee el estado para confirmar.
+    - `tools/verificacion.py` paso 17 cubre la lógica local (stock sube/baja
+      correctamente, cola de sync a Odoo se marca y despeja) en dry-run; el
+      mecanismo de backorder contra Odoo real se probó aparte (no es
+      reproducible en dry-run, depende del wizard real de Odoo).
+17. **2026-07: reconstrucción grande del libro de Sheets — Tiempos consolidada
+    con OEE +5% EXACTO por línea, RRHH centralizado con nómina colombiana
+    completa, CAPEX en bloques por área, hoja Dashboard nueva.** Pedido
+    explícito del dueño del proyecto, con el archivo fuente real
+    `Tiempos_Fontibon_Corregido.xlsx` (10 hojas de auditoría de ingeniería
+    completa) como insumo.
+    - **Hoja `Tiempos` reconstruida** (`tools/actualizar_tiempos_oee.py`):
+      consolida en UNA sola hoja, en 10 bloques, TODO el contenido del
+      archivo fuente — memoria/metodología, las 8 correcciones de auditoría,
+      parámetros y tiempos por línea, **MLT/VSM estación-por-estación**
+      (contenido nuevo, no existía en el ERP), OEE bottom-up, capacidad vs.
+      demanda, **máquinas y referencias comerciales reales** por etapa
+      (KRONES/HEUFT/Festo/Satech/ReeR/Werma/EAO, contenido nuevo), glosario
+      y referencias. La hoja `OEE_TEEP` (redundante, su contenido ya queda
+      cubierto) se **borró**. **Bug real corregido**: `core/tiempos_oee.py:
+      DATOS[...]["mlt_lote_h"]` tenía L2=16.44h/L3=14.9h, que NO coincidían
+      con el archivo fuente (L2=19.26h/L3=15.57h) — ya corregido.
+    - **Mejora de OEE, ahora ESTRICTAMENTE +5% relativo por línea** (antes
+      una cifra plana de +3.9pp igual para las 3 líneas, que en realidad NO
+      correspondía a un +5% relativo exacto porque cada línea parte de un
+      OEE base distinto). `core/tiempos_oee.py: _mejora_pp_linea()` calcula
+      el Δpp exacto por línea (L1 +3.856pp, L2 +3.825pp, L3 +3.769pp — cada
+      uno repartido 50/30/20% entre disponibilidad/rendimiento/calidad) para
+      que `oee_a_implementar = oee_base × 1.05` sea matemáticamente exacto,
+      no aproximado. Cronograma de implementación nuevo
+      (`CRONOGRAMA_MEJORA_OEE`) atado a las 4 fases de preoperación del
+      CAPEX (`FASES_CAPEX`): el +5% se completa al cierre del mes 4, justo
+      antes de la rampa del mes 5. La meta aspiracional de programa (≥86%)
+      queda documentada aparte, sin confundirse con el +5% estricto.
+    - **RRHH centralizado en una sola hoja `RRHH`** (antes `Personal` +
+      `Empleados` separadas, ver decisión #10 — la separación conceptual
+      detalle/agregado se mantiene, ahora en secciones de la misma hoja:
+      RESUMEN POR ROL / ROSTER INDIVIDUAL / TASAS DE CARGA PRESTACIONAL /
+      RECONCILIACIÓN). `integrations/rrhh_client.py` reescrito para leer por
+      nombre de sección (mismo patrón que `leer_capex()`/
+      `leer_apu_ingenieria()`) y escribir SIEMPRE reconstruyendo la hoja
+      completa (el resumen se deriva del roster). **Carga prestacional
+      colombiana agregada** (`core/rrhh.py:
+      COMPONENTES_PRESTACIONALES_COMUNES`/`ARL_POR_CLASE`/
+      `desglosar_costo_empleador()`): EPS 8.5% + pensión 12% + caja 4% +
+      cesantías 8.33% + intereses cesantías 1% + prima 8.33% + vacaciones
+      4.17% (SENA/ICBF exonerados, Ley 1607/2012, salarios <10 SMMLV) + ARL
+      según clase de riesgo (I administrativo 0.522% · III supervisión
+      2.436% · IV planta industrial 4.35% · V alto riesgo 6.96%) — banda de
+      **referencia** de mercado/histórico a validar contra la normativa
+      vigente, mismo criterio que el AIU de `APU_Ingenieria` (no es
+      "tarifa fijada por ley" inmutable). Verificado que
+      `NOMINA_OPERACION_MES`/`NOMINA_IMPLEMENTACION_MES` YA venían cargados
+      con esta carga (la UI de *RRHH* ya decía "costo empleador", no salario
+      base) — **el total NO cambió** ($85.915.382/$87.161.760), solo se
+      justificó de abajo hacia arriba (mismo patrón que el AIU con CAPEX
+      Servicios). Corrección a la nota original de este punto: se creyó que
+      `Dep_Amort` ya era una fórmula SUMIF viva contra `CAPEX` por categoría
+      que se autoactualizaba sola — **era falso**, ver decisión #18.
+    - **`CAPEX` reorganizada en 8 bloques por área** dentro de la MISMA hoja
+      (`tools/reorganizar_capex_areas.py`): título + subtotal por bloque,
+      usando filas con `seccion` vacío (que `leer_capex()` ya salta) para
+      los divisores — **cero cambios de valores**, verificado que
+      `leer_capex()` sigue devolviendo las mismas 84 filas y el mismo total
+      ($11.080.079.385 subtotal / $12.188.087.323 con contingencia).
+    - **Hoja `Dashboard` nueva** (`tools/actualizar_dashboard.py`, primera
+      pestaña del libro): resumen ejecutivo de una pantalla — demanda,
+      capacidad/OEE, caso de negocio, RRHH, navegación del libro. **Bug de
+      locale encontrado y corregido**: escribir números con coma como
+      separador de miles (formato inglés, p. ej. `"279,150"`) con
+      `value_input_option="USER_ENTERED"` en una hoja de locale colombiano
+      (coma = decimal) hace que Sheets **reinterprete** el valor como
+      279.15 y lo muestre mal — corregido usando `value_input_option="RAW"`
+      para esta hoja (es texto ya formateado, no fórmulas).
+    - **No se persigue formato uniforme en todas las hojas** — pedido
+      explícito del dueño del proyecto de dejarlo así, no es un pendiente.
+18. **2026-07: reparación de fórmulas rotas por la reconstrucción de la
+    decisión #17 — root cause y arreglo estructural, no un parche.** Al
+    reorganizar `CAPEX` en bloques y consolidar `Personal`+`Empleados` en
+    `RRHH`, varias hojas quedaron con `#VALUE!`/`#REF!` en cascada
+    (`Sensibilidad`, `Flujo_Caja`, `FinancieroEscenario`, `Reportes`,
+    `ER_Proyecto`, `Dep_Amort`) — encontrado porque el dueño del proyecto
+    señaló explícitamente "las hojas tienen que tener fórmulas funcionales,
+    no solo los datos". Causas y arreglo (`tools/
+    reparar_formulas_capex_rrhh.py`, `tools/convertir_capex_formulas.py`):
+    - **Referencias a celda fija que se movió**: `CAPEX!$G$34` (el total
+      viejo) y `Personal!$D$10`/`$D$11` (nómina Operación/Implementación,
+      hoja ya borrada) apuntaban a celdas que ya no eran las correctas.
+      Reemplazadas por `INDEX/MATCH` **por etiqueta de texto** (p. ej.
+      `INDEX(CAPEX!$G:$G;MATCH("CAPEX TOTAL (con contingencia)";CAPEX!$C:$C;0))`)
+      en vez de coordenadas fijas — sobreviven a que el usuario siga editando
+      CAPEX (agregar/quitar filas), que es justo lo que dijo que iba a
+      seguir haciendo. Ojo con el mapeo: `Personal!$D$10` era **Operación**
+      y `$D$11` era **Implementación** (no al revés — se verificó contra la
+      etiqueta real de la fila que consumía cada una, `ER_Proyecto` fila 12
+      "Nomina operacion" vs. `Flujo_Caja` fila 9 "Equipo implementacion
+      ULogix", antes de reparar, para no invertirlas).
+    - **`Dep_Amort` SUMIF con rango angosto** (`CAPEX!$I$5:$I$29`, dimensionado
+      para el CAPEX viejo de 25 filas): contaba de menos en silencio (sin
+      error visible) desde la expansión del CAPEX a 84 filas, no solo desde
+      la reorganización de esta sesión — **estaba mal desde antes**, se
+      encontró al investigar esto. Ampliado a `$I$5:$I$300`.
+    - **Root cause real, más profundo que las referencias movidas**: la
+      columna `CAPEX COP` (G) y `costo_unitario` (F) de la hoja `CAPEX`
+      mezclaban NÚMEROS reales con TEXTO formateado como moneda (p. ej.
+      `"$90.000"` en vez de `90000`) — según qué script/persona escribió esa
+      fila. Un `SUMIF`/multiplicación sobre una celda de texto la trata como
+      0 o revienta en `#VALUE!`, sin aviso. **Arreglado en la raíz**: la
+      columna G de `CAPEX` ahora es una fórmula viva por fila (`=IF(moneda=
+      "COP";cant×costo;IF(moneda="USD*";cant×costo×TRM;cant×costo×TRM×
+      FACTOR_RFQ))`, leyendo TRM/FACTOR_RFQ de `Parametros!$B$5`/`$B$6` en
+      vivo), los subtotales por bloque son `=SUM(...)` sobre su rango, y el
+      pie (Subtotal/Contingencia/Total) también son fórmulas
+      (`Parametros!$B$27` para contingencia) — nada estático. La columna F
+      se normalizó a número real en las 4 celdas que estaban en texto.
+    - **`RRHH`: el RESUMEN por rol pasó de estático a fórmulas vivas**
+      (`COUNTIFS`/`SUMIFS` sobre el bloque ROSTER INDIVIDUAL de la misma
+      hoja) para conteo, costo unitario y costo total por rol, y el pie
+      (Costo mensual OPERACIÓN/IMPLEMENTACIÓN, lo que lee `Parametros` para
+      gobernar el motor financiero) es `SUMIF` sobre el RESUMEN — si el
+      usuario edita el roster directo en Sheets, todo recalcula solo.
+      `salario_base_cop`/`factor_prestacional_pct` quedan como valores
+      calculados al publicar (no alimentan ningún otro cálculo, mismo
+      criterio que el AIU de `APU_Ingenieria` — no hace falta que sean
+      fórmula viva).
+    - **Verificado exhaustivamente tras el arreglo**: todos los totales
+      recalculados en vivo coinciden EXACTO con los valores conocidos de
+      antes (CAPEX total $12.188.087.323, VPN Base $16.661M/TIR 85.7% en
+      `Sensibilidad`, Nómina Operación $85.915.382/Implementación
+      $87.161.760) — el arreglo no cambió ninguna cifra de negocio, solo
+      las hizo recalcularse solas en vez de quedar pegadas por un script.
 
 ## Estado actual (validado)
 
@@ -251,14 +445,33 @@ nombres de servicio.
 - Tiempos auditados: OEE base 77.1/76.5/75.4 %, TEEP 40.3/40.0/8.3 %.
   **Hallazgo:** con 2 turnos U=1.25 (L1) y 1.30 (L2) → **infactible**, el 3er
   turno la devuelve a 0.83/0.86.
-- Caso de negocio (demanda v4): CAPEX $22.216 M · EBITDA incremental $13.182 M
-  (12 m operativos) · **VPN $8.033 M · TIR 36.6 % E.A. · ROI 103.8 % · payback
-  33/42 m**.
-- Libro Excel: 23 hojas, 3.741 fórmulas, **0 errores** tras recalcular.
-- `tools/verificacion.py`: **15/15 en verde**.
-- Hoja `Empleados` creada y poblada en el libro real (28 personas, reconcilia
-  exacto con los totales de `Personal`: Operación $85.915.382, Implementación
-  $87.161.760).
+- Capacidad/factibilidad de producción **reactiva al escenario activo**:
+  `core/tiempos_oee.py: tabla_tiempos()/tabla_capacidad()` ya recibían
+  `demanda_mensual` pero no estaban conectadas al dashboard — ahora la
+  página *Inventario*, sección "🏭 Capacidad y factibilidad de producción",
+  las llama con `theme.demanda_activa()`: al cambiar de escenario en la
+  página *Escenarios* se ve en vivo si cada línea sigue siendo factible con
+  los turnos actuales (takt requerido, % utilización, si hace falta 3er
+  turno). La base OEE/tiempos sigue siendo documental (no cambia); lo que
+  reacciona es la demanda contra la que se compara — no viola la decisión
+  #1 (el ERP sigue sin gestionar OEE/TEEP en vivo, eso solo llega por MQTT).
+  MRP/compras (*Órdenes Odoo*) y finanzas (*Finanzas*, comparación Base vs.
+  escenario) ya usaban `demanda_activa()` desde antes.
+- Caso de negocio (demanda v4, CAPEX recortado — decisión #15, sin lavadoras
+  ni inspección de línea, celdas robóticas a detalle de BOM real): CAPEX
+  $12.188 M · EBITDA incremental $13.182 M (12 m operativos) · **VPN $16.661
+  M · TIR 85.7 % E.A. · ROI 253.1 % · payback 21/24 m**.
+- Libro Excel: 23 hojas, 3.741 fórmulas, **0 errores** tras recalcular (cifras
+  del caso de negocio pendientes de regenerar el libro con el CAPEX nuevo).
+- `tools/verificacion.py`: **17/17 en verde**.
+- Libro de Sheets real (2026-07, tras la reconstrucción de la decisión #17):
+  `Tiempos` consolidada (10 bloques, MLT/VSM y máquinas reales incluidos),
+  OEE objetivo +5% exacto por línea, `RRHH` centralizada (28 personas, carga
+  prestacional colombiana documentada, reconcilia exacto: Operación
+  $85.915.382, Implementación $87.161.760), `CAPEX` en 8 bloques por área
+  (84 filas, mismo total de siempre), hoja `Dashboard` nueva como primera
+  pestaña. `OEE_TEEP`/`Personal`/`Empleados` ya no existen (contenido
+  migrado, ver decisión #17).
 
 ## Comandos
 

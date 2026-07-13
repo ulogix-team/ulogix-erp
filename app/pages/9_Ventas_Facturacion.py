@@ -107,6 +107,9 @@ else:
                                             mo_name=p["mo_name"], odoo_id=res.get("id"),
                                             estado=estado_venta, detalle=referencia)
                 creadas.append(f"{res['name']} → {c.nombre} ({cantidad:,.0f} un)")
+                if res.get("entregada"):  # salio de bodega -> sale del stock local
+                    state_store.ajustar_stock("producto", sku, -cantidad, "venta_entrega",
+                                              referencia=res["name"])
                 if avanzar and not res.get("entregada"):
                     avisos.append(f"⚠️ {res['name']}: la entrega no se pudo validar "
                                   "(ver log_acciones para el detalle).")

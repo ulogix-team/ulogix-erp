@@ -74,31 +74,31 @@ nuevo si ha pasado tiempo).
 
 | Indicador | Valor esperado |
 |---|---|
-| CAPEX total | ~$22.216 M COP |
-| D&A mensual | ~$206.9 M |
+| CAPEX total | ~$12.188 M COP (recortado 2026-07, decisión #15: sin lavadoras ni inspección de línea, celdas robóticas a detalle de BOM real) |
+| D&A mensual | ~$123.5 M |
 | EBITDA incremental 12 m operativos | ~$13.182 M |
-| VPN @ TMAR 18 % E.A. | ~$8.033 M |
-| TIR | ~36.6 % E.A. |
-| ROI 60 m | ~103.8 % |
-| Payback | 33 m simple / 42 m descontado |
-| Sensibilidad VPN | $2.380 M (Cons.) — $12.831 M (Opt.) |
+| VPN @ TMAR 18 % E.A. | ~$16.661 M |
+| TIR | ~85.7 % E.A. |
+| ROI 60 m | ~253.1 % |
+| Payback | 21 m simple / 24 m descontado |
+| Sensibilidad VPN | $12.463 M (Cons.) — $20.478 M (Opt.) |
 
-## El libro Excel (23 hojas del seed original + `Empleados`/`APU_Ingenieria` agregadas por el ERP)
+## El libro Excel (seed original de 23 hojas + `RRHH`/`APU_Ingenieria`/`Dashboard` agregadas por el ERP; `Personal`/`Empleados`/`OEE_TEEP` ya no existen, consolidadas 2026-07 — ver decisión #17 de CLAUDE.md)
 
 Orden y responsables:
 
 | Área | Hojas | Dirección |
 |---|---|---|
-| — | LEEME_Integracion, Reportes | fórmulas |
-| Finanzas | `Parametros`, `CAPEX` | **usuario edita → `core/finanzas_negocio.py` LEE** (Sheets → ERP) |
+| — | LEEME_Integracion, Reportes, `Dashboard` (resumen ejecutivo, nueva) | fórmulas / ERP escribe (`tools/actualizar_dashboard.py`) |
+| Finanzas | `Parametros`, `CAPEX` (en 8 bloques por área desde 2026-07, `tools/reorganizar_capex_areas.py` — mismo esquema/valores, solo presentación) | **usuario edita → `core/finanzas_negocio.py` LEE** (Sheets → ERP) |
 | Finanzas | `APU_Ingenieria` (justificación de las 3 filas `Servicios` de `CAPEX`, AIU) | **ERP escribe** (`tools/publicar_apu_ingenieria.py`), solo exhibición — no alimenta cálculos |
-| Finanzas | Modelo_Negocio, ER_Proyecto, Flujo_Caja, Balance, FinancieroEscenario, Sensibilidad, Licencias, Personal, Costos_Lote, Dep_Amort | equipo + fórmulas |
-| RRHH | `Empleados` (roster individual, ver skill `integraciones-erp-ulogix`) | **ERP escribe/lee** (`integrations/rrhh_client.py`), separado de `Personal` |
+| Finanzas | Modelo_Negocio, ER_Proyecto, Flujo_Caja, Balance, FinancieroEscenario, Sensibilidad, Licencias, Costos_Lote, Dep_Amort (fórmula SUMIF viva contra CAPEX por categoría) | equipo + fórmulas |
+| RRHH | `RRHH` (roster + resumen por rol + tasas de carga prestacional colombiana + reconciliación, consolidada — ver skill `integraciones-erp-ulogix`) | **ERP escribe/lee** (`integrations/rrhh_client.py`), reconstrucción completa (el resumen se deriva del roster) |
 | Ventas | Demanda, DemandaEscenario | **app escribe** (ERP → Sheets, rango fijo `A4:F16`) |
 | Inventario | Inventarios | **app escribe** (`A4:I8`) + fórmulas de rotación |
 | Compras | PlanCompras | app escribe |
 | Producción | KPIs_UNS, LibroProduccion, ResumenMensual | middleware escribe (MQTT/UNS) |
-| Producción (doc.) | Tiempos, OEE_TEEP | **documentales, NO conectadas** |
+| Producción (doc.) | `Tiempos` (consolidada, incluye OEE/TEEP/MLT-VSM/máquinas reales/glosario en 10 bloques, `tools/actualizar_tiempos_oee.py`) | **documental, NO conectada** |
 
 ### Costos de ingeniería ULogix (APU) — `APU_Ingenieria`
 

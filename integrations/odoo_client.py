@@ -416,6 +416,100 @@ class OdooClient:
             state_store.log("odoo", "completar_orden_fabricacion ERROR", f"{mo_id}: {e}")
             return {"ok": False, "modo": "error", "detalle": str(e)}
 
+    def avanzar_produccion_parcial(self, mo_id: int | None, mo_name: str,
+                                   qty_a_producir: float) -> dict:
+        """
+        Registra un AVANCE PARCIAL de una orden de fabricacion todavia
+        abierta (no la ultima porcion): descuenta en Odoo, de inmediato, la
+        BOM proporcional a `qty_a_producir` y da entrada a esa misma
+        cantidad de producto terminado — sin esperar a que la orden completa
+        cierre. Usa el flujo nativo de "backorder" de mrp.production: fija
+        `qty_producing`, marca los `stock.move` de componentes recogidos en
+        esa proporcion, llama `button_mark_done` (que en Odoo, cuando
+        qty_producing < product_qty, no cierra la orden sino que devuelve la
+        accion del wizard `mrp.production.backorder`) y completa ese wizard
+        con `to_backorder=True`: la orden ORIGINAL queda 'done' solo por
+        `qty_a_producir` unidades (con sufijo -00N en el nombre) y Odoo crea
+        AUTOMATICAMENTE una MO nueva por el remanente (mismo `origin`,
+        mismo producto/BOM) que sigue abierta para el siguiente avance o
+        para el cierre final (`completar_orden_fabricacion`, sin backorder
+        porque ese ultimo llamado siempre cubre TODO lo que quede).
+
+        Verificado en vivo contra Odoo real (saas-19.3): la respuesta XML-RPC
+        de `action_backorder` a veces trae un `Fault` de marshalling
+        ("cannot marshal None") aunque la operacion SI se ejecuto en el
+        servidor — por eso este metodo no confia en esa respuesta y en su
+        lugar relee el estado para confirmar el resultado.
+
+        Devuelve {'ok', 'mo_id_nuevo', 'mo_name_nuevo'} (la MO backorder que
+        el middleware debe rastrear de ahora en adelante para este SKU) o
+        {'ok': False, 'detalle'} si algo fallo de verdad.
+        """
+        if self.dry_run or mo_id is None or qty_a_producir <= 0:
+            state_store.log("odoo", "avanzar_produccion_parcial (dry-run/no-op)",
+                            f"{mo_name} x {qty_a_producir:g}")
+            return {"ok": True, "modo": "dry-run", "mo_id_nuevo": mo_id, "mo_name_nuevo": mo_name}
+        try:
+            info = self._kw("mrp.production", "read",
+                            [[mo_id], ["state", "product_qty", "origin"]])[0]
+            if info["state"] in ("done", "cancel"):
+                return {"ok": False, "detalle": f"MO {mo_id} ya esta {info['state']}"}
+            if info["state"] == "draft":
+                self._kw("mrp.production", "action_confirm", [[mo_id]])
+            self._kw("mrp.production", "action_assign", [[mo_id]])
+            objetivo_mo = info["product_qty"]
+            qty_parcial = min(qty_a_producir, objetivo_mo)
+
+            move_ids = self._kw("stock.move", "search",
+                                [[["raw_material_production_id", "=", mo_id]]])
+            moves = self._kw("stock.move", "read", [move_ids, ["product_uom_qty"]])
+            self._kw("mrp.production", "write", [[mo_id], {"qty_producing": qty_parcial}])
+            for mv in moves:
+                cant = round(mv["product_uom_qty"] * qty_parcial / objetivo_mo, 6)
+                try:  # Odoo <= 16
+                    self._kw("stock.move", "write", [[mv["id"]], {"quantity_done": cant}])
+                except Exception:  # Odoo 17+
+                    self._kw("stock.move", "write",
+                             [[mv["id"]], {"quantity": cant, "picked": True}])
+
+            try:
+                self._kw("mrp.production", "button_mark_done", [[mo_id]])
+            except Exception:  # noqa: BLE001 — puede fallar si ya no hay wizard que mostrar
+                pass
+
+            estado = self._kw("mrp.production", "read", [[mo_id], ["state"]])[0]["state"]
+            if estado == "done":
+                # qty_parcial == objetivo_mo (cerro sin backorder): no deberia
+                # pasar aqui (el middleware solo llama esto en ordenes que
+                # AUN no completan), pero si pasa no hay MO nueva que rastrear
+                state_store.log("odoo", "avanzar_produccion_parcial: cerro sin backorder",
+                                f"id={mo_id} qty={qty_parcial:g}")
+                return {"ok": True, "mo_id_nuevo": mo_id, "mo_name_nuevo": mo_name}
+
+            try:
+                wiz_id = self._kw("mrp.production.backorder", "create", [{
+                    "mrp_production_ids": [(6, 0, [mo_id])],
+                    "mrp_production_backorder_line_ids": [(0, 0, {
+                        "mrp_production_id": mo_id, "to_backorder": True})],
+                }])
+                self._kw("mrp.production.backorder", "action_backorder", [[wiz_id]])
+            except Exception:  # noqa: BLE001 — Fault de marshalling conocido, ver docstring
+                pass
+
+            nuevas = self._kw("mrp.production", "search",
+                              [[["origin", "=", info["origin"]],
+                                ["state", "not in", ["done", "cancel"]]]])
+            if not nuevas:
+                return {"ok": False, "detalle": f"no aparecio MO backorder para origin={info['origin']}"}
+            nuevo_id = nuevas[0]
+            nuevo_name = self._kw("mrp.production", "read", [[nuevo_id], ["name"]])[0]["name"]
+            state_store.log("odoo", "avanzar_produccion_parcial",
+                            f"{mo_name} +{qty_parcial:g} -> {nuevo_name} (id={nuevo_id})")
+            return {"ok": True, "mo_id_nuevo": nuevo_id, "mo_name_nuevo": nuevo_name}
+        except Exception as e:  # noqa: BLE001
+            state_store.log("odoo", "avanzar_produccion_parcial ERROR", f"{mo_id}: {e}")
+            return {"ok": False, "detalle": str(e)}
+
     # -------------------------------------------------------------- ventas
     def crear_orden_venta(self, cliente: str, lineas: list[LineaPedido],
                           referencia: str, confirmar: bool = True,
