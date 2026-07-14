@@ -634,6 +634,22 @@ nombres de servicio.
     conserva la auditoria completa. `APU_Ingenieria` desglosa NX, Tecnomatix,
     RobotStudio, Ignition, MES/UNS Coreflux, ERP/Odoo, FAT/SAT e instalacion.
 
+24. **2026-07: CAPEX ordenado por L1/L2/L3 y licencias reconciliadas.** La
+    organización anterior por cada combinación `seccion+linea` había creado
+    17 bloques y dejó nomenclatura histórica contradictoria (`L2 330 ml`,
+    `L3 PET`, `L7 Agua`). `tools/normalizar_capex_licencias.py` conserva las
+    85 partidas pero las presenta en cinco bloques: **L1**, **L2**, GANTRY
+    compartido **L1-L2**, **L3** y transversal **L1-L2-L3**. La fila Software
+    de CAPEX referencia por etiqueta el total vivo de `Licencias`: perpetuas
+    (Studio 5000 + Ignition, CAPEX $112.086.015) frente a suscripciones y
+    hosting (RobotStudio, NX, Plant Simulation, Coreflux, Odoo y MES/ERP;
+    OPEX $8.262.150/mes). Azure IoT y LabVIEW quedan excluidos en cero. Total
+    CAPEX vivo: **$9.165.554.245**. `leer_parametros()`/`leer_capex()`/
+    `leer_licencias()` usan `UNFORMATTED_VALUE`: antes Python leía la TRM
+    3.248,87 como el valor visual redondeado 3.249; ahora reconcilia con las
+    fórmulas de Sheets. Los comandos históricos de reorganización delegan al
+    normalizador vigente para no reintroducir los 17 bloques.
+
 ## Estado actual (validado)
 
 - Pronóstico v4 sobre 21 trimestres reales de KOF: MAPE 2.9/2.9/2.1 %.
@@ -652,9 +668,8 @@ nombres de servicio.
   #1 (el ERP sigue sin gestionar OEE/TEEP en vivo, eso solo llega por MQTT).
   MRP/compras (*Órdenes Odoo*) y finanzas (*Finanzas*, comparación Base vs.
   escenario) ya usaban `demanda_activa()` desde antes.
-- Caso de negocio vivo (alcance decisión #23): CAPEX $9.080 M · EBITDA
-  incremental $9.252 M (12 m operativos) · **VPN $10.729 M · TIR 76.7 %
-  E.A. · ROI 222.4 % · payback 22/26 m**.
+- Caso de negocio vivo (alcance decisiones #23-24): CAPEX $9.166 M ·
+  **VPN $10.803 M · TIR 76.7 % E.A. · ROI 222.4 % · payback 22/26 m**.
 - Libro Excel: 23 hojas, 3.741 fórmulas, **0 errores** tras recalcular (cifras
   del caso de negocio pendientes de regenerar el libro con el CAPEX nuevo).
 - `tools/verificacion.py`: **17/17 en verde**.
@@ -662,8 +677,8 @@ nombres de servicio.
   `Tiempos` consolidada + `Tiempos_Resumen` ejecutivo,
   OEE objetivo +5% exacto por línea, `RRHH` centralizada (28 personas, carga
   prestacional colombiana documentada, reconcilia exacto: Operación
-  $85.915.382, Implementación $87.161.760), `CAPEX` en 8 bloques por área
-  (85 filas de datos, total vivo $9.080 M), hoja `Dashboard` nueva como primera
+  $85.915.382, Implementación $87.161.760), `CAPEX` en 5 bloques por línea
+  (85 filas de datos, total vivo $9.166 M), hoja `Dashboard` nueva como primera
   pestaña. `OEE_TEEP`/`Personal`/`Empleados` ya no existen (contenido
   migrado, ver decisión #17).
 

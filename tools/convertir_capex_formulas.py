@@ -24,7 +24,6 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from integrations.sheets_client import Contabilidad
-from core.finanzas_negocio import CAPEX_FILAS
 
 TRM_CELL = "Parametros!$B$5"
 RFQ_CELL = "Parametros!$B$6"
@@ -81,16 +80,10 @@ def main() -> None:
     print(f"{len(filas_datos)} filas de datos, {len(filas_subtotal_bloque)} subtotales de "
          f"bloque, pie en filas {fila_subtotal_general}/{fila_contingencia}/{fila_total}")
 
-    # Una reorganizacion hecha sobre valores formateados puede convertir
-    # costos como "$75.000" en texto. Restablece F desde el seed en el mismo
-    # orden; APU_Ingenieria vuelve a enlazar despues sus tres filas Servicios.
-    if len(filas_datos) != len(CAPEX_FILAS):
-        raise RuntimeError("CAPEX vivo y CAPEX_FILAS tienen longitudes distintas; "
-                           "no es seguro normalizar costo_unitario")
-    ws.batch_update(
-        [{"range": f"F{r}", "values": [[fila[5]]]} for r, fila in zip(filas_datos, CAPEX_FILAS)],
-        value_input_option="USER_ENTERED",
-    )
+    # La hoja viva gobierna cantidades, costos y orden de filas. No se debe
+    # volver a escribir F desde CAPEX_FILAS: despues de agrupar por L1/L2/L3
+    # el orden visual ya no coincide con el seed local y hacerlo corromperia
+    # costos o formulas (APU y Licencias). Este script solo reconstruye G.
 
     # construye la columna G completa (desde la primera fila de datos hasta
     # el pie) en un solo arreglo, para escribirla en UNA sola llamada

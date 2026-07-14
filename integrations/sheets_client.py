@@ -426,7 +426,12 @@ class Contabilidad:
         try:
             if self.modo == "sheets":
                 ws = self._spreadsheet().worksheet("Parametros")
-                filas = ws.get_all_values()
+                # No usar get_all_values() aqui: devuelve el valor VISUAL y
+                # puede redondear entradas (p.ej. TRM 3248.87 se muestra
+                # "3.249" y Python terminaria usando 3249). El valor sin
+                # formato conserva la precision que usan las formulas de
+                # Sheets y mantiene ambos motores reconciliados.
+                filas = ws.get("A1:D200", value_render_option="UNFORMATTED_VALUE")
             else:
                 raise RuntimeError("modo excel")
         except Exception as e:  # noqa: BLE001
@@ -479,7 +484,7 @@ class Contabilidad:
         try:
             if self.modo == "sheets":
                 ws = self._spreadsheet().worksheet("CAPEX")
-                filas = ws.get_all_values()
+                filas = ws.get("A1:I500", value_render_option="UNFORMATTED_VALUE")
             else:
                 raise RuntimeError("modo excel")
         except Exception as e:  # noqa: BLE001
@@ -531,7 +536,7 @@ class Contabilidad:
         try:
             if self.modo == "sheets":
                 ws = self._spreadsheet().worksheet("Licencias")
-                filas = ws.get_all_values()
+                filas = ws.get("A1:I200", value_render_option="UNFORMATTED_VALUE")
             else:
                 raise RuntimeError("modo excel")
         except Exception as e:  # noqa: BLE001
@@ -544,12 +549,16 @@ class Contabilidad:
                 return {}
             filas = [[c if c is not None else "" for c in row]
                      for row in wb["Licencias"].iter_rows(values_only=True)]
-        out: dict[str, str] = {}
+        out: dict[str, object] = {}
         for fila in filas:
             if not fila or not str(fila[0]).strip():
                 continue
             etiqueta = str(fila[0]).strip().lower()
-            no_vacias = [str(c).strip() for c in fila[1:] if str(c).strip()]
+            # Preservar numeros como int/float: al convertir un valor
+            # UNFORMATTED como 8262150.05 a texto, numero_cop interpretaria
+            # el punto segun el locale colombiano. _num() acepta el numero
+            # crudo directamente y conserva sus decimales.
+            no_vacias = [c for c in fila[1:] if str(c).strip()]
             if not no_vacias:
                 continue
             if etiqueta.startswith("capex software capitalizable"):

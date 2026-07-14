@@ -42,8 +42,8 @@ Sheets** de la página Finanzas para forzarlo al instante):
 | Producción | `LibroProduccion` / `ResumenMensual` / `KPIs_UNS` | ERP → Sheets | middleware/sync | append/reemplazo |
 | Maestro | `Maestro_Productos` (SKU, atributos físicos, empaque, EAN, precio y costo base) | **Sheets → ERP** | `leer_maestro_productos()` | tabla completa por SKU |
 | Financiero | `Parametros` (pares clave-valor: TRM, TMAR, nómina, otros fijos, vidas útiles, unit economics por SKU...) | **Sheets → ERP** | `leer_parametros()` | pares clave-valor, cualquier fila |
-| Financiero | `CAPEX` (tabla: sección, línea, activo, cantidad, moneda, costo_unitario, vida_años, categoría_dep) | **Sheets → ERP** | `leer_capex()` | tabla, encabezado reconocido por nombre de columna |
-| Financiero | `Licencias` (`CAPEX software capitalizable`, `OPEX mensual licencias` — última celda no vacía de la fila) | **Sheets → ERP** | `leer_licencias()` | filas etiquetadas, sin columna fija |
+| Financiero | `CAPEX` (85 partidas en bloques L1, L2, L1-L2, L3 y transversal; tabla: sección, línea, activo, cantidad, moneda, costo_unitario, vida_años, categoría_dep) | **Sheets → ERP** | `leer_capex()` | tabla, encabezado reconocido por nombre de columna |
+| Financiero | `Licencias` (detalle CAPEX perpetuo vs. OPEX recurrente; totales etiquetados `CAPEX software capitalizable` / `OPEX mensual licencias`) | **Sheets → ERP** | `leer_licencias()` | filas etiquetadas, sin columna fija; CAPEX enlaza el primer total por fórmula |
 | RRHH | `RRHH` (roster + resumen por rol + tasas, consolidada — ver `integrations/rrhh_client.py`) | ERP → Sheets *(alta)* / **Sheets → ERP** *(lectura)* | `leer_empleados()` / `publicar_empleados()` / `agregar_empleado()` | reconstrucción completa (el resumen se deriva del roster), sin fórmulas dependientes |
 | Financiero | `APU_Ingenieria` (costos de ingeniería que cobra ULogix, justificados por AIU) | ERP → Sheets | `tools/publicar_apu_ingenieria.py` (escribe) / `leer_apu_ingenieria()` (lee, solo exhibición) | reemplazo; tarifa propia enlazada por fórmula a `RRHH` |
 | Financiero | `Analisis_Paletizado` (caso de inversión paralelo: paletizado+encajonado antes/ULogix/comercial) | ERP → Sheets | `tools/publicar_analisis_paletizado.py` — solo exhibición, no alimenta `CAPEX_FILAS` ni el caso de negocio principal | reemplazo, sin fórmulas dependientes |
@@ -53,6 +53,11 @@ de miles, coma = separador decimal (`"3.850"` = 3850, `"18,00%"` = 0.18,
 `"1.200,0"` = 1200.0). `integrations/sheets_client.py: numero_cop()` es el
 parser compartido; `core/finanzas_negocio.py: _num()` lo usa y además maneja
 el sufijo `%`. **No** uses el formato inglés al editar celdas nuevas.
+Las lecturas financieras usan `value_render_option="UNFORMATTED_VALUE"` para
+conservar el número subyacente: por ejemplo, una TRM 3248,87 puede mostrarse
+como `3.249`, pero Python debe recibir 3248.87, igual que las fórmulas de
+Sheets. Los números sin formato se conservan como `int`/`float`; no deben
+convertirse a texto antes de pasarlos a `_num()`/`numero_cop()`.
 
 **Contrato de la hoja `Parametros` para el motor financiero** (todas las
 claves son opcionales — si faltan o el valor no castea a número, el motor usa

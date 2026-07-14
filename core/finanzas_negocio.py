@@ -70,8 +70,8 @@ NOMINA_OPERACION_MES = 85_915_382.0      # Personal (base y proyecto)
 NOMINA_IMPLEMENTACION_MES = 87_161_760.0  # equipo ULogix, meses pre-op
 OTROS_FIJOS_BASE_MES = 250_000_000.0
 OTROS_FIJOS_PROYECTO_MES = 280_000_000.0
-OPEX_LICENCIAS_MES = 14_180_736.67
-CAPEX_SOFTWARE = 34_650_000.0             # licencias perpetuas capitalizables
+OPEX_LICENCIAS_MES = 8_262_150.05         # suscripciones + hosting; fallback de Licencias
+CAPEX_SOFTWARE = 112_086_015.0            # Studio 5000 + Ignition perpetuos
 DSO, DIO, DPO = 25, 17, 30                # dias (balance) — no gobernados por Sheets aun
 REF_XLSM = {"vpn": 2_180_752_718.0, "tir_anual": 0.2316,
             "ebitda_y1": 8_053_914_020.0}
@@ -88,18 +88,18 @@ REF_XLSM = {"vpn": 2_180_752_718.0, "tir_anual": 0.2316,
 # #15 de CLAUDE.md. moneda "USD*" = cotizacion real de la BOM (sin el factor
 # RFQ de "USD", que es solo un benchmark no confirmado).
 CAPEX_FILAS = [
-    ("Benchmark retrofit", "L2 330 mL", "Upgrade lavadora retornable / prewash (KRONES Lavatec)", 0, "USD", 450_000, 10, "equipos"),
-    ("Benchmark retrofit", "L2 330 mL", "Inspeccion envase vacio (HEUFT SPECTRUM II SX)", 0, "USD", 180_000, 7, "automatizacion"),
-    ("Maquinaria usada", "L1 350 mL RGB", "Llenadora/tapadora KRONES usada 44.000 bph (VODM/Modulfill; reserva RFQ)", 1, "USD", 550_000, 10, "equipos"),
-    ("Benchmark retrofit", "L2 330 mL", "Etiquetadora y sincronizacion (servos)", 0, "USD", 120_000, 7, "automatizacion"),
-    ("Maquinaria usada", "L1 350 mL RGB", "Conveyors, motores y VFD para llenado y encajonado", 1, "USD", 100_000, 7, "equipos"),
-    ("Diseño ULogix", "L1 350 mL RGB", "Encajonadora custom para canastilla 30x30 (BOM de ingenieria; reserva RFQ)", 1, "USD", 60_000, 10, "automatizacion"),
-    ("Maquinaria usada", "L2 PET 1.5 L", "Llenadora KRONES usada CSD PET 18.000 bph (Mecafill/Contiform; reserva RFQ)", 1, "USD", 425_000, 10, "equipos"),
-    ("Benchmark retrofit", "L3 PET 1.5 L", "Inspeccion botella llena (HEUFT PRIME)", 0, "USD", 160_000, 7, "automatizacion"),
-    ("Maquinaria usada", "L2 PET 1.5 L", "KRONES Variopac 459 usada para termoencogible (Machinio)", 1, "USD*", 79_900, 7, "equipos"),
-    ("Maquinaria usada", "L2 PET 1.5 L", "Conveyors / transporte PET y enlace al GANTRY compartido", 1, "USD", 90_000, 10, "equipos"),
-    ("Benchmark retrofit", "L7 Agua 25 L", "Lavado y sanitizacion garrafon", 0, "USD", 230_000, 10, "equipos"),
-    ("Benchmark retrofit", "L7 Agua 25 L", "Skid tratamiento de agua (KRONES Hydronomic)", 0, "USD", 320_000, 10, "equipos"),
+    ("Benchmark retrofit", "L1", "Upgrade lavadora retornable / prewash (KRONES Lavatec)", 0, "USD", 450_000, 10, "equipos"),
+    ("Benchmark retrofit", "L1", "Inspeccion envase vacio (HEUFT SPECTRUM II SX)", 0, "USD", 180_000, 7, "automatizacion"),
+    ("Maquinaria usada", "L1", "Llenadora/tapadora KRONES usada 44.000 bph (VODM/Modulfill; reserva RFQ)", 1, "USD", 550_000, 10, "equipos"),
+    ("Benchmark retrofit", "L1", "Etiquetadora y sincronizacion (servos)", 0, "USD", 120_000, 7, "automatizacion"),
+    ("Maquinaria usada", "L1", "Conveyors, motores y VFD para llenado y encajonado", 1, "USD", 100_000, 7, "equipos"),
+    ("Diseño ULogix", "L1", "Encajonadora custom para canastilla 30x30 (BOM de ingenieria; reserva RFQ)", 1, "USD", 60_000, 10, "automatizacion"),
+    ("Maquinaria usada", "L2", "Llenadora KRONES usada CSD PET 18.000 bph (Mecafill/Contiform; reserva RFQ)", 1, "USD", 425_000, 10, "equipos"),
+    ("Benchmark retrofit", "L2", "Inspeccion botella llena (HEUFT PRIME)", 0, "USD", 160_000, 7, "automatizacion"),
+    ("Maquinaria usada", "L2", "KRONES Variopac 459 usada para termoencogible (Machinio)", 1, "USD*", 79_900, 7, "equipos"),
+    ("Maquinaria usada", "L2", "Conveyors / transporte PET y enlace al GANTRY compartido", 1, "USD", 90_000, 10, "equipos"),
+    ("Benchmark retrofit", "L3", "Lavado y sanitizacion garrafon", 0, "USD", 230_000, 10, "equipos"),
+    ("Benchmark retrofit", "L3", "Skid tratamiento de agua (KRONES Hydronomic)", 0, "USD", 320_000, 10, "equipos"),
     # split de "Llenado / taponado / inspeccion garrafon" ($240k, mismo patron que
     # ya uso el usuario en L2/L3 al separar llenado de inspeccion en filas propias.
     # Sin desglose real del proveedor para garrafon: se estima inspeccion ~15% del
@@ -107,9 +107,9 @@ CAPEX_FILAS = [
     # porque garrafon es la linea mas lenta -- 480 und/h, core/tiempos_oee.py -- y
     # un chequeo de nivel de llenado ahi es mecanicamente mas simple que la vision
     # de envase vacio/lleno de L2/L3). Suma exacta = 240_000 (204_000 + 36_000).
-    ("Fuera de alcance", "L3 Garrafon 25 L", "Llenado / taponado garrafon (equipo existente suficiente)", 0, "USD", 204_000, 10, "equipos"),
-    ("Benchmark retrofit", "L7 Agua 25 L", "Inspeccion garrafon", 0, "USD", 36_000, 10, "automatizacion"),
-    ("Fuera de alcance", "L3 Garrafon 25 L", "Conveyors generales de garrafon (manejo de celda ya esta en BOM)", 0, "USD", 110_000, 7, "equipos"),
+    ("Fuera de alcance", "L3", "Llenado / taponado garrafon (equipo existente suficiente)", 0, "USD", 204_000, 10, "equipos"),
+    ("Benchmark retrofit", "L3", "Inspeccion garrafon", 0, "USD", 36_000, 10, "automatizacion"),
+    ("Fuera de alcance", "L3", "Conveyors generales de garrafon (manejo de celda ya esta en BOM)", 0, "USD", 110_000, 7, "equipos"),
     ("Benchmark retrofit", "Comun", "PLC panels / I/O / seguridad (CompactLogix + safety)", 3, "USD", 106_667, 7, "automatizacion"),
     ("Benchmark retrofit", "Comun", "HMIs / estaciones SCADA", 6, "USD", 10_000, 5, "automatizacion"),
     ("Benchmark retrofit", "Comun", "Camaras y vision artificial (Cognex)", 0, "USD", 95_000, 5, "automatizacion"),
@@ -183,7 +183,7 @@ CAPEX_FILAS = [
     ("Celdas roboticas (BOM real)", "L3", "Gabinete electrico NSYCRN75250 (Schneider Electric)", 1, "USD*", 260, 10, "equipos"),
     ("Celdas roboticas (BOM real)", "L3", "Fuente de alimentacion DC CP-E 24/10.0 (ABB)", 1, "USD*", 190, 10, "equipos"),
     ("Celdas roboticas (BOM real)", "L3", "HMI CP620 (ABB)", 1, "USD*", 650, 10, "equipos"),
-    ("Software", "Comun", "Licencias perpetuas capitalizables (Studio 5000)", 1, "COP", CAPEX_SOFTWARE, 3, "software"),
+    ("Software", "Comun", "Software capitalizable (Studio 5000 + Ignition; detalle en Licencias)", 1, "COP", CAPEX_SOFTWARE, 3, "software"),
 ]
 CONTINGENCIA = 0.10
 
