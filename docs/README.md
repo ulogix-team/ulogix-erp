@@ -10,6 +10,7 @@
 
 | Guía | Alcance |
 |---|---|
+| [Reporte para presentación](REPORTE_PRESENTACION_ULOGIX_FONTIBON.md) | Relato completo del proyecto, guion de diapositivas, preguntas y checklist de demostración |
 | [Integración de APIs](INTEGRACION_APIS.md) | Odoo, Google Sheets, UNS MQTT, variables de entorno y pruebas funcionales |
 | [Pipeline de demanda](PIPELINE_DEMANDA.md) | Holt-Winters, Bates-Granger, Monte Carlo, escenarios y publicación |
 | [Referencias](REFERENCIAS.md) | Fuentes de demanda, ingeniería y supuestos |

@@ -152,6 +152,7 @@ continúa siendo la fuente viva; el repositorio conserva snapshots auditables.
 
 ## Documentación
 
+- [Reporte técnico-ejecutivo para presentación](docs/REPORTE_PRESENTACION_ULOGIX_FONTIBON.md)
 - [Índice técnico](docs/README.md)
 - [Integración de APIs](docs/INTEGRACION_APIS.md)
 - [Pipeline de demanda](docs/PIPELINE_DEMANDA.md)
