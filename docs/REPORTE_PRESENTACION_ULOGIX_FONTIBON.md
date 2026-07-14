@@ -10,10 +10,10 @@
 
 ## Automatización, planeación y viabilidad de la planta FEMSA Fontibón
 
-**Fecha de corte:** 14 de julio de 2026  
-**Proyecto:** ULogix Fontibón Suite  
-**Planta de referencia:** Coca-Cola FEMSA / INDEGA Fontibón, Bogotá  
-**Líneas:** L1 Coca-Cola 350 ml vidrio retornable · L2 QuAtro 1.5 L PET · L3 garrafón 25 L retornable  
+**Fecha de corte:** 14 de julio de 2026<br>
+**Proyecto:** ULogix Fontibón Suite<br>
+**Planta de referencia:** Coca-Cola FEMSA / INDEGA Fontibón, Bogotá<br>
+**Líneas:** L1 Coca-Cola 350 ml vidrio retornable · L2 QuAtro 1.5 L PET · L3 garrafón 25 L retornable<br>
 **Repositorios:** `ulogix-fontibon-suite` y `ulogix-data-finance`
 
 > Este documento explica qué se construyó, por qué se construyó, cómo funciona y cómo defenderlo en una presentación. Las cifras financieras corresponden al snapshot vivo de Google Sheets publicado el 14 de julio de 2026.
