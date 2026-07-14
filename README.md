@@ -1,4 +1,24 @@
-# Ulogix · Suite Fontibón v4 — KOF / INDEGA
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/banners/header-dark.svg" width="100%"/>
+
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/dividers/divider-dark.svg" width="100%"/>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ulogix-team/assets/main/logos/ulogix-icon-transparent-dark.svg" height="58" alt="ULogix"/>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/ERP-Streamlit_%2B_Odoo-000000?style=flat-square" alt="ERP"/>
+  &nbsp;
+  <img src="https://img.shields.io/badge/UNS-Coreflux_MQTT-000000?style=flat-square" alt="UNS MQTT"/>
+  &nbsp;
+  <img src="https://img.shields.io/badge/QA-17%2F17-000000?style=flat-square" alt="QA"/>
+  &nbsp;
+  <img src="https://img.shields.io/badge/CAPEX-COP_9.166B-000000?style=flat-square" alt="CAPEX"/>
+  &nbsp;
+  <img src="https://img.shields.io/badge/VPN-COP_11.032B-000000?style=flat-square" alt="VPN"/>
+</p>
+
+# ULogix · Suite Fontibón v4 — KOF / INDEGA
 
 ERP de planeación y ejecución para la planta Coca-Cola FEMSA Fontibón (Bogotá),
 colgado del **UNS FEMSA** e integrado con **Odoo** (XML-RPC) y **Google Sheets**
@@ -7,12 +27,13 @@ escenarios → inventario/MRP → órdenes de compra → producción vía UNS �
 finanzas del retrofit (ROI/VPN/TIR).
 
 **Modelo de negocio (retrofit brownfield de las 3 líneas existentes):**
-+11% throughput · OEE 83% → ≥86% (fase 1: **+5% relativo justificado**) ·
++11% throughput · OEE base L1/L2/L3 77,12%/76,50%/75,37% → fase 1 con
+**+5% relativo exacto por línea** (meta aspiracional ≥86% separada) ·
 +5% flujo de caja · encajonadora custom L1 · GANTRY ABB compartido L1-L2 ·
 robot ABB para garrafones L3 · llenadoras KRONES usadas L1/L2 · Variopac
 usada L2 · gemelos digitales, SCADA, MES/UNS y ERP/Odoo.
 
----
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/dividers/divider-section-dark.svg" width="100%"/>
 
 ## Arquitectura
 
@@ -77,14 +98,15 @@ Guía completa paso a paso: **`docs/INTEGRACION_APIS.md`**.
    queda en la BD ERP.
 3. **Inventario** — política (s,Q) Monte Carlo + MRP; política y plan de
    compras persisten en el ERP.
-4. **Órdenes (Odoo)** — genera POs desde el plan (dry-run o real).
+4. **Órdenes (Odoo)** — genera POs de insumos y MOs ligadas a BOM desde el
+   plan (dry-run o real), con idempotencia por referencia.
 5. **Producción (UNS)** — estado vivo del middleware, KPIs MES por línea,
    publicador de prueba y contrato completo del UNS.
 6. **Finanzas** — P&L del libro de producción + **caso de negocio conectado
    a la demanda** (base vs escenario activo, sin supuesto de crecimiento —
-   sigue siempre la demanda que manda el ERP): CAPEX $9.080M COP · EBITDA
-   incremental $9.252M (12 m op.) · **VPN $10.729M · TIR 76,7% E.A. · ROI
-   222,4% · payback 22/26 m** + sincronización al libro de Drive.
+   sigue siempre la demanda que manda el ERP): CAPEX $9.166M COP · EBITDA
+   incremental $9.406M (12 m op.) · **VPN $11.032M · TIR 78,2% E.A. · ROI
+   226,7% · payback 22/25 m** + sincronización al libro de Drive.
 7. **Pruebas** — diagnóstico en vivo: eco MQTT al UNS, Odoo
    (authenticate + PO de prueba), Sheets (escribir/releer + leer Parámetros).
 8. **Base de datos** — navegador de las 10 tablas ERP con exportación CSV y
@@ -96,10 +118,11 @@ Guía completa paso a paso: **`docs/INTEGRACION_APIS.md`**.
 
 ## UNS
 
-El árbol es tu YAML (`config/uns_femsa.yaml`, intacto). El middleware se
-suscribe a `FEMSA/+/MES/KPI/#`, `FEMSA/+/MES/Maintance/#`, `FEMSA/+/Process/#`
-(convención de conteo: `GoodCount/Count/Produccion/value`) y **publica retained**
-la rama `FEMSA/LineaX/ERP/…` con la PO activa. Simulador:
+El árbol vive en `config/uns_femsa.yaml`. El middleware se suscribe a KPI y
+mantenimiento por línea y planta, y a `FEMSA/LineaX/ERP/AvailableQuantity`.
+El ERP **publica retained** en `FEMSA/LineaX/ERP/…` una sola MO activa por
+línea; el MES escribe `AvailableQuantity` como avance absoluto. `GoodCount`
+continúa únicamente como contrato legado de prueba. Simulador:
 `python tools/simulador_produccion.py` (UNS) · `--legacy` (contrato v1) ·
 `--offline` (sin broker).
 
@@ -122,7 +145,16 @@ python tools/verificacion.py   # 17 pasos: datos, modelos, MRP, Odoo, MQTT,
 
 ## Repositorio hermano
 
-`femsa-modelo-financiero/` genera **`Modelo_FEMSA_Ulogix_2026.xlsx`** (el libro
-que se sube a Drive y se conecta por API): Parámetros, Tiempos, OEE base vs
-+5%, CAPEX con BOM real de celdas, modelo financiero de 60 meses con fórmulas
-vivas y las hojas que escribe la app.
+[`ulogix-data-finance`](https://github.com/ulogix-team/ulogix-data-finance)
+publica **`Modelo_FEMSA_Ulogix_2026.xlsx`** y documenta la arquitectura,
+gobernanza, CAPEX, APU, licencias, tiempos, OEE y viabilidad. Google Sheets
+continúa siendo la fuente viva; el repositorio conserva snapshots auditables.
+
+## Documentación
+
+- [Índice técnico](docs/README.md)
+- [Integración de APIs](docs/INTEGRACION_APIS.md)
+- [Pipeline de demanda](docs/PIPELINE_DEMANDA.md)
+- [Referencias](docs/REFERENCIAS.md)
+
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/banners/footer-dark.svg" width="100%"/>

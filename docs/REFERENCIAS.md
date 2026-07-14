@@ -1,3 +1,7 @@
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/banners/header-dark.svg" width="100%"/>
+
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/dividers/divider-dark.svg" width="100%"/>
+
 # Referencias de justificación de la demanda
 
 Fuentes usadas en el proyecto para justificar la serie, la mensualización y
@@ -42,3 +46,5 @@ los escenarios (citadas en el informe IEEE del proyecto):
 > Nota: la serie incluida en `data/` reproduce el esquema y órdenes de
 > magnitud de la extracción de los reportes (1); reemplázala por la
 > extracción original para resultados exactos del informe.
+
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/banners/footer-dark.svg" width="100%"/>

@@ -23,3 +23,5 @@ CLAUDE.local.md
 
 # streamlit
 .streamlit/secrets.toml
+.worktrees/
+.tmp/

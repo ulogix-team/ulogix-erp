@@ -1,4 +1,8 @@
-# Integración de APIs — Suite Ulogix Fontibón
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/banners/header-dark.svg" width="100%"/>
+
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/dividers/divider-dark.svg" width="100%"/>
+
+# Integración de APIs — Suite ULogix Fontibón
 
 Guía definitiva para conectar las tres integraciones. Las credenciales viven
 **solo** en `.env` y `config/google_service_account.json` (nunca en el código);
@@ -16,8 +20,9 @@ JSON, no versionado). gspread firma un JWT con esa llave privada contra
 requisito es **compartir el libro con ese correo**.
 
 **Pasos (una sola vez):**
-1. Sube `Modelo_FEMSA_Ulogix_2026.xlsx` (repo `femsa-modelo-financiero/salida/`)
-   a Google Drive y ábrelo → *Archivo → Guardar como hoja de cálculo de Google*.
+1. Sube `Modelo_FEMSA_Ulogix_2026.xlsx` desde
+   `ulogix-data-finance/financiero/modelo/` a Google Drive y ábrelo →
+   *Archivo → Guardar como hoja de cálculo de Google*.
 2. Botón **Compartir** → agrega como **Editor** el `client_email` de
    `config/google_service_account.json`
 3. Copia el **ID** del libro de la URL:
@@ -441,3 +446,5 @@ venta usa el asistente público `sale.advance.payment.inv`. Como XML-RPC puede
 reportar un Fault de serialización después de ejecutar el asistente, el cliente
 relee `account.move` por `invoice_origin`; esa relectura determina el éxito.
 Antes de contabilizar, toda factura borrador recibe `invoice_date`.
+
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/banners/footer-dark.svg" width="100%"/>

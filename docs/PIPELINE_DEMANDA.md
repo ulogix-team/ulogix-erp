@@ -1,4 +1,8 @@
-# Integracion del pipeline original de demanda
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/banners/header-dark.svg" width="100%"/>
+
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/dividers/divider-dark.svg" width="100%"/>
+
+# Integración del pipeline original de demanda
 
 El paquete fuente de `Downloads/Repo/paquete` documenta la cadena 00-14 que
 origino el modelo: extraccion KOF, reconstruccion mensual, pruebas, Holt-Winters,
@@ -30,3 +34,5 @@ docker compose -f docker-compose.dashboard.yml exec dashboard \
 
 La prueba recalcula sin tocar `Demanda` y exige equivalencia con el snapshot
 vigente. Solo admite diferencias pequenas de redondeo del optimizador.
+
+<img src="https://raw.githubusercontent.com/ulogix-team/assets/main/banners/footer-dark.svg" width="100%"/>
