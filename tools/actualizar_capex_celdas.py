@@ -21,6 +21,7 @@ Contingencia + CAPEX TOTAL), recalculando las formulas de la columna
 'CAPEX COP' por fila segun la moneda:
   USD  (benchmark, no confirmado)  -> cantidad x costo_unitario x TRM x FACTOR_RFQ
   USD* (cotizacion real de BOM)    -> cantidad x costo_unitario x TRM (sin RFQ)
+  GBP* (cotizacion real proveedor) -> cantidad x costo_unitario x GBP/COP
   COP  (directo)                   -> cantidad x costo_unitario
 
 Uso: python tools/actualizar_capex_celdas.py
@@ -52,6 +53,9 @@ def _formula_capex_cop(fila_num: int, moneda: str) -> str:
         return f"=D{fila_num}*F{fila_num}*Parametros!$B$5*Parametros!$B$6"
     if moneda == "USD*":
         return f"=D{fila_num}*F{fila_num}*Parametros!$B$5"
+    if moneda == "GBP*":
+        return (f'=D{fila_num}*F{fila_num}*INDEX(Parametros!$B:$B;'
+                'MATCH("gbp_cop";Parametros!$A:$A;0))')
     return f"=D{fila_num}*F{fila_num}"  # COP directo
 
 
@@ -122,10 +126,8 @@ def main() -> None:
     celdas_l3 = [f for f in CAPEX_FILAS if f[0].startswith("Celdas") and f[1] == "L3"]
     suma_l1l2 = sum(f[3] * f[5] for f in celdas_l1l2)
     suma_l3 = sum(f[3] * f[5] for f in celdas_l3)
-    print(f"  Celda GANTRY L1-L2: {len(celdas_l1l2)} items -> USD {suma_l1l2:,.0f} "
-          f"(esperado 107,993)")
-    print(f"  Celda ROBOT ARTICULADO L3: {len(celdas_l3)} items -> USD {suma_l3:,.0f} "
-          f"(esperado 131,896)")
+    print(f"  Celda GANTRY L1-L2: {len(celdas_l1l2)} items -> suma nominal {suma_l1l2:,.0f}")
+    print(f"  Celda ROBOT ARTICULADO L3: {len(celdas_l3)} items -> suma nominal multimoneda {suma_l3:,.0f}")
     zeroed = [f[2] for f in CAPEX_FILAS if f[3] == 0]
     print(f"  Filas en cantidad=0 ({len(zeroed)}): {zeroed}")
 

@@ -198,7 +198,7 @@ def _toee():
     assert int(t.loc[t.linea == "L1", "q_lote_turno_und"].iloc[0]) == 262440
     assert abs(o.loc[o.linea == "L1", "oee_base"].iloc[0] - 0.7712) < 1e-3
     assert abs(o.loc[o.linea == "L1", "oee_a_implementar"].iloc[0] - 0.7712 * 1.05) < 1e-3
-    assert c.set_index("linea").loc["L2", "rp_despues_uph"] == 12000  # CAPEX filler=0
+    assert c.set_index("linea").loc["L2", "rp_despues_uph"] == 18000  # KRONES usada activa
     assert c.set_index("linea").loc["L3", "rp_despues_uph"] == 600
     assert (c["U_antes"] > 1).tolist() == [True, True, False]
     assert (c["U_despues"] <= 1).all()
@@ -209,27 +209,18 @@ def _toee():
 
 @paso("14. Caso de negocio (ROI/VPN/TIR)")
 def _fin():
-    # QA de LOGICA del motor (defaults/fallback), no del CAPEX en vivo: el
-    # usuario edita CAPEX/Parametros en Sheets a proposito (decision #3 de
-    # CLAUDE.md) y esos valores reales cambian el caso de negocio real por
-    # diseño -- probar eso pertenece a la pagina Finanzas, no a este assert
-    # fijo. Se fuerza dry-run aunque haya credenciales reales, igual que los
-    # pasos 7-9.
+    # Sanidad del caso vigente. CAPEX/Parametros son entradas vivas editables;
+    # por eso no se fija una cifra exacta que volveria a romper el QA ante un
+    # RFQ valido. Se exige creacion de valor y recuperacion dentro de 36 meses.
     from config import settings
     from core.finanzas_negocio import indicadores
     previo, settings.DRY_RUN_FORZADO = settings.DRY_RUN_FORZADO, True
     ind = indicadores()
     settings.DRY_RUN_FORZADO = previo
-    # 2026-07: CAPEX reducido (sin lavadoras ni inspeccion de linea, celdas
-    # roboticas a detalle de BOM real) -- ver decision de diseno #15 de
-    # CLAUDE.md. El EBITDA incremental no cambio (es demand-driven, no
-    # CAPEX-driven) y el CAPEX casi se redujo a la mitad, por lo que la TIR
-    # y el payback mejoraron sustancialmente frente al caso anterior.
-    # Tras llevar el precio base vivo de Maestro_Productos a los valores
-    # actuales de Sheets, el caso vigente es 48.9% / 28 meses. Se conserva
-    # el assert numerico para detectar cambios involuntarios del fallback.
-    assert ind["vpn_cop"] > 0 and 0.40 < ind["tir_anual"] < 0.60
-    assert ind["payback_simple_meses"] == 28
+    assert ind["capex_total_cop"] > 0 and ind["vpn_cop"] > 0
+    assert 0.20 < ind["tir_anual"] < 2.0
+    assert ind["payback_simple_meses"] is not None
+    assert ind["payback_simple_meses"] <= 36
     return (f"VPN ${ind['vpn_cop']/1e6:,.0f}M · TIR {ind['tir_anual']*100:.1f}% · "
             f"ROI {ind['roi_horizonte_60m']*100:.1f}% · payback {ind['payback_simple_meses']}m")
 

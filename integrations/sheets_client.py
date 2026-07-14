@@ -413,8 +413,9 @@ class Contabilidad:
 
         Contrato de claves que hoy consume `core.finanzas_negocio` (todas
         opcionales; si faltan, el motor usa su default local): TRM,
-        FACTOR_RFQ, TMAR_ANUAL, UPLIFT_THROUGHPUT, FACTOR_MONETIZACION,
-        RAMPA_MES5, SCRAP_PP, MANT_EVITADO_MES, TASA_RENTA, WC_PCT_INGRESO,
+        GBP_COP, FACTOR_RFQ, TMAR_ANUAL, UPLIFT_THROUGHPUT, FACTOR_MONETIZACION,
+        RAMPA_MES5, SCRAP_PP, MANT_EVITADO_MES, AHORRO_LABORAL_MES,
+        TASA_RENTA, WC_PCT_INGRESO,
         CRECIMIENTO_DEMANDA_ANUAL, FASES_CAPEX ("0.20,0.35,0.27,0.18"),
         NOMINA_OPERACION_MES, NOMINA_IMPLEMENTACION_MES, OTROS_FIJOS_BASE_MES,
         OTROS_FIJOS_PROYECTO_MES, OPEX_LICENCIAS_MES, CAPEX_SOFTWARE,
@@ -616,6 +617,40 @@ class Contabilidad:
                 if any(str(c).strip() for c in f):
                     detalle.append(_fila_a_dict(enc, f))
         return {"resumen": resumen, "detalle": detalle}
+
+    def leer_proveedores_capex(self) -> pd.DataFrame:
+        """Registro de proveedores/cotizaciones que acompaña el CAPEX vivo."""
+        try:
+            if self.modo != "sheets":
+                return pd.DataFrame()
+            filas = self._spreadsheet().worksheet("Proveedores_CAPEX").get_all_values()
+        except Exception:
+            return pd.DataFrame()
+        idx = next((i for i, f in enumerate(filas)
+                    if f and str(f[0]).strip().lower() == "linea"), None)
+        if idx is None:
+            return pd.DataFrame()
+        enc = filas[idx]
+        datos = [f + [""] * (len(enc) - len(f)) for f in filas[idx + 1:]
+                 if any(str(c).strip() for c in f)]
+        return pd.DataFrame(datos, columns=enc)
+
+    def leer_viabilidad_automatizacion(self) -> pd.DataFrame:
+        """Resumen antes/Ulogix/mercado publicado en el libro financiero."""
+        try:
+            if self.modo != "sheets":
+                return pd.DataFrame()
+            filas = self._spreadsheet().worksheet("Viabilidad_Automatizacion").get_all_values()
+        except Exception:
+            return pd.DataFrame()
+        idx = next((i for i, f in enumerate(filas)
+                    if f and str(f[0]).strip() == "Concepto"), None)
+        if idx is None:
+            return pd.DataFrame()
+        enc = filas[idx]
+        datos = [f + [""] * (len(enc) - len(f)) for f in filas[idx + 1:]
+                 if f and str(f[0]).strip()]
+        return pd.DataFrame(datos, columns=enc)
 
     def probar(self) -> dict:
         """Prueba de conectividad: escribe y relee una celda de verificacion."""

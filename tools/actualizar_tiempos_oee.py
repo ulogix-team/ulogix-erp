@@ -205,9 +205,9 @@ def _filas_maquinas(src) -> list[list]:
         out.append(_fila_ancha(lin, MAQUINAS_ESTADO[lin]["antes"],
                                MAQUINAS_ESTADO[lin]["despues"],
                                MAQUINAS_ESTADO[lin]["intervencion"], n=4))
-    out.append(_fila_ancha("Nota L2: el retrofit del bloc Contiform está excluido del "
-                           "CAPEX vivo (cantidad=0); por eso su tasa permanece en "
-                           "12.000 u/h después del proyecto."))
+    out.append(_fila_ancha("Nota L2: el proyecto ahora incorpora una llenadora KRONES "
+                           "usada de 18.000 u/h y una Variopac usada; la tasa de diseño "
+                           "se dimensiona con holgura sobre la demanda y el OEE objetivo."))
     out.append(_fila_ancha(""))
     out.append(_fila_ancha("Nota (decisión #15 de CLAUDE.md): el CAPEX real YA NO "
                            "incluye comprar equipos de inspección nuevos. Esto reconcilia "
@@ -404,8 +404,37 @@ def main() -> None:
               {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
     ws.freeze(rows=2)
 
+    # Vista corta y legible: Tiempos conserva la auditoria completa; esta
+    # portada evita recorrer 26 columnas para tomar decisiones de capacidad.
+    resumen = [["TIEMPOS — RESUMEN EJECUTIVO ANTES vs DESPUES", "", "", "", "", "", "", "", "", "", "", "", ""],
+               ["Los tiempos base/OEE medidos gobiernan ANTES; los equipos y OEE de diseño gobiernan DESPUES. L3 conserva la llenadora.", "", "", "", "", "", "", "", "", "", "", "", ""],
+               [],
+               ["linea", "producto", "equipo antes", "equipo despues", "tasa antes", "tasa despues",
+                "OEE antes", "OEE despues", "demanda anual", "capacidad antes", "capacidad despues",
+                "utilizacion antes", "utilizacion despues", "dictamen despues"]]
+    comp = tabla_capacidad_comparada()
+    for _, r in comp.iterrows():
+        resumen.append([r["linea"], DATOS[r["linea"]]["producto"], r["equipo_antes"],
+                        r["equipo_despues"], r["rp_antes_uph"], r["rp_despues_uph"],
+                        r["oee_antes"], r["oee_despues"], r["demanda_anual_und"],
+                        r["capacidad_antes_und"], r["capacidad_despues_und"],
+                        r["U_antes"], r["U_despues"], r["dictamen_despues"]])
+    resumen += [[], ["Lectura de ingenieria"],
+                ["L1", "Encajonadora 30x30 + llenadora KRONES usada 44k + GANTRY compartido"],
+                ["L2", "Llenadora KRONES usada 18k + Variopac + el mismo GANTRY alternado con L1"],
+                ["L3", "Solo celda robotica; llenadora existente 600 gfn/h es suficiente"]]
+    try:
+        wr = ss.worksheet("Tiempos_Resumen")
+    except Exception:  # noqa: BLE001
+        wr = ss.add_worksheet("Tiempos_Resumen", rows=50, cols=16)
+    wr.clear(); wr.update(resumen, "A1", value_input_option="USER_ENTERED")
+    wr.format("A1:N1", FMT_TITULO); wr.format("A4:N4", FMT_ENCAB)
+    wr.format("G5:H7", {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
+    wr.format("L5:M7", {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
+    wr.freeze(rows=4, cols=1)
+
     print(f"Publicado 'Tiempos': {len(filas)} filas x {ancho} columnas, "
-         f"{len(titulos_idx)} bloques.")
+         f"{len(titulos_idx)} bloques + portada 'Tiempos_Resumen'.")
 
     try:
         ws_oee = ss.worksheet("OEE_TEEP")

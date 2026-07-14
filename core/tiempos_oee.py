@@ -71,33 +71,33 @@ DATOS = {
 # estado de diseno DESPUES de ejecutar el CAPEX.  DATOS conserva el contrato
 # historico (estado base) porque otros modulos lo usan para resolver SKU/linea.
 # Las tasas de DESPUES solo cambian cuando el equipo realmente esta incluido
-# en el CAPEX vivo: L1 recupera la tasa de diseno con el retrofit Modulfill;
-# L2 conserva el Contiform de 12.000 u/h (su retrofit esta excluido, cantidad
-# 0); L3 elimina el cuello manual de 480 gfn/h y queda limitada por la nueva
-# llenadora/tapadora de 600 gfn/h.  El tercer turno de L1/L2 es una condicion
+# en el CAPEX vivo: L1 usa una KRONES usada de 44.000 bph; L2 reemplaza la
+# llenadora por una KRONES usada de 18.000 bph; L3 conserva su llenadora de
+# 600 gfn/h y la celda robotica elimina el cuello manual de 480 gfn/h.
+# El tercer turno de L1/L2 es una condicion
 # operativa del estado proyecto, separada del aumento tecnologico de capacidad.
 DATOS_DESPUES = {
-    "L1": dict(rp_nominal=45000, rp_diseno=45000, turnos=3),
-    "L2": dict(rp_nominal=12000, rp_diseno=13000, turnos=3),
+    "L1": dict(rp_nominal=44000, rp_diseno=44000, turnos=3),
+    "L2": dict(rp_nominal=18000, rp_diseno=18000, turnos=3),
     "L3": dict(rp_nominal=600, rp_diseno=600, turnos=1),
 }
 
 MAQUINAS_ESTADO = {
     "L1": {
         "antes": "KRONES Mecafill usada 42.500 u/h + paletizado manual",
-        "despues": "Retrofit KRONES Modulfill HES 45.000 u/h + celda GANTRY ABB",
-        "intervencion": "Retrofit llenadora/tapadora, conveyors/VFD y GANTRY L1-L2",
+        "despues": "KRONES VODM/Modulfill usada 44.000 u/h + encajonadora 30x30 + GANTRY ABB",
+        "intervencion": "Cambio de llenadora, encajonadora custom, conveyors/VFD y GANTRY compartido L1-L2",
     },
     "L2": {
         "antes": "KRONES Contiform Bloc 2004 12.000 u/h + paletizado manual",
-        "despues": "Contiform 12.000 u/h + celda GANTRY ABB + etiquetado/transporte",
-        "intervencion": ("El bloc de llenado no cambia (CAPEX=0); se automatiza "
-                         "paletizado y se intervienen etiquetado/transporte"),
+        "despues": "KRONES usada 18.000 u/h + Variopac termoencogible + GANTRY ABB compartido",
+        "intervencion": ("Cambio de llenadora; Variopac prepara paquetes y el mismo "
+                         "GANTRY alterna el paletizado con L1"),
     },
     "L3": {
         "antes": "Monoblock 600 gfn/h limitado por paletizado manual a 480 gfn/h",
-        "despues": "Llenadora/tapadora 600 gfn/h + robot ABB IRB 5710",
-        "intervencion": "Nueva llenadora/tapadora y celda robotica de paletizado",
+        "despues": "Llenadora/tapadora existente 600 gfn/h + robot ABB EUROBOTS",
+        "intervencion": "Se conserva la llenadora; solo se incorpora la celda robotica de paletizado",
     },
 }
 TT, TIP, TNP, TSU_MIN, Q_CALIDAD = 8.0, 1.1667, 0.75, 70, 0.99932
@@ -112,7 +112,7 @@ CRONOGRAMA_MEJORA_OEE = [
     (2, 2, 0.35, "Instalacion y comisionamiento de celdas roboticas de paletizado (L1-L2/L3)",
      "disponibilidad", "Elimina microparos y esperas del paletizado manual; baja MTTR "
      "(monitoreable por UNS/MES) -> gana el componente de disponibilidad."),
-    (3, 3, 0.27, "Retrofit de llenadoras (Modulfill/Contiform)",
+    (3, 3, 0.27, "Cambio por llenadoras KRONES usadas en L1/L2; L3 conserva su llenadora",
      "rendimiento", "Estabiliza la velocidad real vs nominal (SE) y reduce microparos "
      "de llenado (RE) -> gana el componente de rendimiento."),
     (4, 4, 0.18, "Reasignacion de inspectoras existentes (HEUFT PRIME L2->L1, "

@@ -16,11 +16,10 @@ terceros/OEM (FAT/SAT, cuadrillas de instalacion) son supuestos de mercado
 documentados linea por linea, a validar con cotizacion real antes de
 contratar — no son cifras oficiales de KRONES/HEUFT ni de un subcontratista.
 
-Los tres precios totales del APU coinciden EXACTAMENTE con los montos ya
-existentes en la hoja CAPEX (Servicios): este script no cambia el CAPEX
-total ni el caso de negocio, solo lo justifica de abajo hacia arriba
-(el AIU implicito resultante, 27-28%, cae dentro de la banda de mercado —
-es una senal de que las cifras originales ya estaban bien calibradas).
+Los tres precios totales se calculan desde el detalle vivo y alimentan las
+filas Servicios de CAPEX. El alcance incluye mecanica, controles, RobotStudio,
+Siemens NX, Tecnomatix Plant Simulation, Ignition SCADA, MES/UNS Coreflux y
+ERP/Odoo. Las licencias se mantienen en la hoja Licencias para no duplicarlas.
 
 Uso: python tools/publicar_apu_ingenieria.py
 Requiere Sheets configurado (.env); si no hay credenciales, no hace nada
@@ -45,63 +44,71 @@ def _aiu_pct(costo_directo: float, precio_total: float) -> float:
 
 
 def _items() -> list[tuple[str, list[tuple], float]]:
+    h = round(COSTO_HORA_ULOGIX)
+    propia = "Mano de obra propia"
     i1 = [
-        ("Mano de obra propia ULogix (ingenieria de detalle: P&IDs, planos electricos, "
-         "filosofia de control)", 1360, "horas", round(COSTO_HORA_ULOGIX),
-         "Mano de obra propia",
-         "Ing. automatizacion 480h + Ing. MES/UNS 400h + Ing. procesos 320h + "
-         "Lider de proyecto 160h (RRHH en Sheets, tarifa = costo empleador / 160h-mes)"),
-        ("FAT (Factory Acceptance Test) — honorarios OEM (KRONES, HEUFT)", 1, "global",
-         577_500_000, "Subcontratado / terceros",
-         "Referencia de mercado: ~5% del valor de los equipos sujetos a prueba de fabrica "
-         "(bienes de capital importados) — no es cotizacion real de KRONES/HEUFT, es un "
-         "supuesto documentado a validar con el proveedor"),
-        ("Viajes y viaticos FAT (Alemania, 2 ingenieros, 10 dias)", 1, "global",
-         34_000_000, "Logistica / viajes", "Tiquetes + viaticos"),
-        ("SAT (Site Acceptance Test) — honorarios especialistas OEM en sitio", 1, "global",
-         157_500_000, "Subcontratado / terceros",
-         "3 especialistas x 15 dias x tarifa dia de mercado (bienes de capital industriales)"),
-        ("PMO — gobierno de proyecto y aseguramiento de calidad", 1, "global",
-         40_000_000, "Mano de obra propia + terceros",
-         "Lider de proyecto (dedicacion transversal) + auditoria de calidad externa"),
+        ("Ingenieria de proceso y dimensionamiento de capacidad", 320, "horas", h, propia,
+         "Balance antes/despues, OEE, demanda, holgura y especificacion de llenadoras usadas"),
+        ("Diseño mecanico encajonadora 30x30 y GANTRY compartido", 480, "horas", h, propia,
+         "Layout, grippers, transportadores, alternancia L1/L2, planos y BOM"),
+        ("Ingenieria electrica, seguridad y control ABB", 420, "horas", h, propia,
+         "IRC5, servos, I/O, redes, interlocks, matrices causa-efecto y filosofia de control"),
+        ("ABB RobotStudio: trayectorias y virtual commissioning", 320, "horas", h, propia,
+         "RAPID, colisiones, ciclos, grippers y validacion virtual de celdas"),
+        ("Siemens NX: gemelos digitales mecatronicos", 360, "horas", h, propia,
+         "Celdas, embotellado, encajonado y paletizado; interfaces CAD con RobotStudio"),
+        ("Tecnomatix Plant Simulation: modelo integral de planta", 400, "horas", h, propia,
+         "L1-L3, turnos, buffers, fallas, OEE, escenarios y capacidad"),
+        ("Ignition SCADA e historian", 360, "horas", h, propia,
+         "Sinopticos, tags, alarmas, tendencias, presion y equipos de las tres lineas"),
+        ("MES, Coreflux MQTT y UNS", 480, "horas", h, propia,
+         "79 topicos, OEE/KPI/eventos/alarmas, trazabilidad y AvailableQuantity"),
+        ("ERP/Odoo y analitica de demanda", 320, "horas", h, propia,
+         "Pronostico, MRP, inventarios, compras, MO, ventas, facturacion e integracion MES"),
+        ("Ciberseguridad OT, edge y arquitectura de datos", 160, "horas", h, propia,
+         "Segmentacion, backups, hardening, usuarios, certificados y recuperacion"),
+        ("PMO, documentacion, QA y protocolos FAT/SAT", 320, "horas", h, propia,
+         "Plan maestro, riesgos, control de cambios, manuales y trazabilidad de pruebas"),
+        ("Inspeccion tecnica y due diligence de maquinaria usada", 2, "equipos", 45_000_000,
+         "Subcontratado / terceros", "Llenadoras KRONES L1/L2: condicion, formatos, repuestos y prueba en vacio"),
+        ("FAT remoto/presencial y viaticos", 1, "global", 32_000_000,
+         "Logistica / viajes", "Pruebas de fillers/Variopac y celdas; cotizar antes de adjudicar"),
     ]
     i2 = [
-        ("Mano de obra propia ULogix (supervision de instalacion y comisionamiento)",
-         560, "horas", round(COSTO_HORA_ULOGIX), "Mano de obra propia",
-         "Ing. automatizacion 240h + Ing. procesos 240h + Lider de proyecto 80h"),
-        ("Cuadrillas de instalacion mecanica/electrica (subcontratado)", 1, "global",
-         420_000_000, "Subcontratado / terceros",
-         "~18-20 tecnicos (electricistas, mecanicos, soldadores, riggers) x 3 meses, "
-         "retrofit de 3 lineas"),
-        ("Comisionamiento de celdas roboticas (especialistas del integrador)", 1, "global",
-         60_000_000, "Subcontratado / terceros",
-         "GANTRY paletizado L1-L2 + brazo articulado L3"),
-        ("Alquiler de equipo pesado (gruas, montacargas, andamios)", 1, "global",
-         50_000_000, "Equipos / alquiler", "3 meses"),
-        ("Materiales menores de instalacion (cableado, canaletas, soporteria)", 1, "global",
-         120_000_000, "Materiales",
-         "Consumibles electricos/mecanicos no incluidos en el CAPEX de equipos"),
-        ("Seguridad industrial (HSE, permisos de trabajo, EPP)", 1, "global",
-         35_000_000, "Materiales", ""),
-        ("Transporte e izaje de equipos a sitio", 1, "global",
-         29_219_120, "Logistica / viajes", ""),
+        ("Supervision ULogix de desmontaje, montaje y comisionamiento", 1200, "horas", h,
+         propia, "Coordinacion mecanica, electrica, automatizacion, software y arranque"),
+        ("Especialistas OEM maquinaria KRONES usada L1/L2", 1, "global", 180_000_000,
+         "Subcontratado / terceros", "Ajuste de formatos, overhaul selectivo, puesta a punto y SAT"),
+        ("Cuadrillas mecanicas/electricas y rigging", 1, "global", 220_000_000,
+         "Subcontratado / terceros", "Montaje de fillers, Variopac, encajonadora, conveyors y celdas"),
+        ("Comisionamiento celdas ABB y GANTRY", 1, "global", 45_000_000,
+         "Subcontratado / terceros", "GANTRY compartido L1/L2 y robot garrafones L3"),
+        ("Gruas, montacargas, alineacion y andamios", 1, "global", 45_000_000,
+         "Equipos / alquiler", "Ventanas de parada coordinadas por linea"),
+        ("Cableado, canaletas, soporteria y consumibles", 1, "global", 90_000_000,
+         "Materiales", "Material menor no incluido en BOM de equipos"),
+        ("Seguridad industrial HSE", 1, "global", 25_000_000,
+         "Materiales", "Permisos, LOTO, EPP, pruebas de seguridad y dossier"),
+        ("Transporte local, izaje y nacionalizacion complementaria", 1, "global", 55_000_000,
+         "Logistica / viajes", "No duplica envios incluidos en cotizaciones EUROBOTS/IGAM"),
     ]
     i3 = [
-        ("Mano de obra propia ULogix (diseno y facilitacion de capacitacion)",
-         960, "horas", round(COSTO_HORA_ULOGIX), "Mano de obra propia",
-         "Gestora del cambio 640h + Ing. MES/UNS 160h + Analista de datos 160h"),
-        ("Materiales de capacitacion (manuales, videos, simuladores Tecnomatix)", 1, "global",
-         35_000_000, "Materiales", ""),
-        ("Facilitadores externos (gestion del cambio organizacional)", 1, "global",
-         40_000_000, "Subcontratado / terceros", ""),
-        ("Logistica de capacitacion (salones, catering, viaticos — 3 lineas x 3 turnos)",
-         1, "global", 39_789_920, "Logistica / viajes", ""),
+        ("Diseño y facilitacion de capacitacion ULogix", 900, "horas", h, propia,
+         "Operaciones, mantenimiento, SCADA, MES, ERP, UNS, NX, Tecnomatix y RobotStudio"),
+        ("Manuales, videos, SOP y escenarios de simulacion", 1, "global", 25_000_000,
+         "Materiales", "Entregables editables y ejercicios por rol"),
+        ("Especialistas externos/OEM", 1, "global", 20_000_000,
+         "Subcontratado / terceros", "Formacion especifica KRONES y ABB"),
+        ("Logistica de entrenamiento por turnos", 1, "global", 25_000_000,
+         "Logistica / viajes", "Cobertura L1/L2 tres turnos y L3 un turno"),
     ]
-    return [
-        ("Ingenieria de detalle, FAT/SAT y PMO", i1, 1_164_000_000),
-        ("Instalacion y puesta en marcha (EPC)", i2, 970_000_000),
-        ("Capacitacion y gestion del cambio", i3, 242_500_000),
-    ]
+    items = []
+    for nombre, detalle, aiu in (("Ingenieria de detalle, FAT/SAT y PMO", i1, 0.275),
+                                 ("Instalacion y puesta en marcha (EPC)", i2, 0.28),
+                                 ("Capacitacion y gestion del cambio", i3, 0.28)):
+        directo = sum(r[1] * r[3] for r in detalle)
+        items.append((nombre, detalle, round(directo * (1 + aiu))))
+    return items
 
 
 def filas_hoja() -> list[list]:
@@ -147,7 +154,7 @@ def filas_hoja() -> list[list]:
         ])
         for comp, cant, uni, vu, tipo, nota in filas_item:
             tarifa = vu
-            if comp.startswith("Mano de obra propia ULogix"):
+            if tipo == "Mano de obra propia":
                 tarifa = ('=INDEX(RRHH!$G:$G;MATCH("Equipo diseno y desarrollo ULogix";'
                           'RRHH!$A:$A;0))/160')
             detalle_rows.append([nombre, comp, nota or comp, cant, uni, tarifa,

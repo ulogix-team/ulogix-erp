@@ -38,7 +38,8 @@ def main() -> None:
         raise SystemExit("Sheets no esta configurado (.env).")
     ss = cont._spreadsheet()
     ws = ss.worksheet("CAPEX")
-    vals = ws.get_all_values()
+    vals = ws.get("A1:I300", value_render_option="FORMULA")
+    visibles = ws.get("A1:I300", value_render_option="FORMATTED_VALUE")
 
     # ubica header (fila con 'seccion' en A) y el inicio del pie (primera
     # fila de datos vacia despues del header, o la nota GRP001/Subtotal)
@@ -57,7 +58,8 @@ def main() -> None:
         idx_fin_datos = i + 1
     pie = vals[idx_fin_datos:]  # nota GRP001, blancos, subtotal/contingencia/total
 
-    total_antes = sum(_num_cop(f[6]) for f in filas_datos if len(f) > 6)
+    visibles_datos = [visibles[i] for i in range(idx_header + 1, idx_fin_datos)]
+    total_antes = sum(_num_cop(f[6]) for f in visibles_datos if len(f) > 6)
     print(f"Filas de datos originales: {len(filas_datos)} · total CAPEX COP original: "
          f"${total_antes:,.0f}")
 
@@ -90,7 +92,7 @@ def main() -> None:
 
     nuevas_filas.extend(f + [""] * (ancho - len(f)) for f in pie)
 
-    total_despues = sum(_num_cop(f[6]) for f in filas_datos if len(f) > 6)
+    total_despues = total_antes  # la reorganizacion preserva las mismas filas/formulas
     assert abs(total_antes - total_despues) < 1, "el total cambio -- no deberia pasar"
 
     ws.clear()

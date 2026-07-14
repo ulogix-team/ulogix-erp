@@ -60,11 +60,9 @@ las dos, a diferencia de las celdas de paletizado GANTRY/ROBOT ARTICULADO
 que si tienen BOM real de 60 items -- ver decision #15 de CLAUDE.md) --
 misma logica de "supuesto documentado, a validar con RFQ real antes de
 comprometer capital" que ya se uso para el split de L7 en esa misma
-decision. NO alimentan CAPEX_FILAS del motor financiero principal
-(core/finanzas_negocio.py) ni cambian el caso de negocio del proyecto --
-es un analisis de inversion PARALELO, especifico de la decision de
-paletizado/encajonado, igual que APU_Ingenieria es paralelo y no toca el
-CAPEX real (ver decision #11).
+decision. La decision ya alimenta el modelo principal: el equipo esta en
+CAPEX y el ahorro laboral monetizable se integra al EBITDA. Este modulo
+conserva el comparativo; `Viabilidad_Automatizacion` es la vista viva.
 
 Horizonte: 10 anios (vida util de "equipos" en VIDAS, finanzas_negocio.py)
 descontado a TMAR_ANUAL = 18% (misma tasa del motor financiero principal,
@@ -111,8 +109,8 @@ DOTACION_MANUAL = {
 # presupuestadas en CAPEX_FILAS de finanzas_negocio.py -- USD* (cotizacion
 # real, sin FACTOR_RFQ, igual que alli).
 CAPEX_PALETIZADO_USD = {
-    "GANTRY_L1_L2": 107_993.0,   # sirve a L1 y L2 en conjunto
-    "ROBOT_L3": 131_896.0,       # solo L3
+    "GANTRY_L1_L2": 96_493.0,    # IRC5 IGAM baja de 18.000 a 6.500
+    "ROBOT_L3": 63_332.0,        # robot EUROBOTS GBP 13.500 + resto BOM
 }
 # Base de reparto GANTRY L1<->L2: 50/50 por cantidad de operarios de
 # paletizado liberados en cada linea (1 operario/turno en ambas, ver
@@ -126,7 +124,8 @@ REPARTO_GANTRY_L1 = 0.5
 # complejidad relativa a la celda GANTRY (un solo brazo pick&place con
 # gripper de botella + magazine de canastilla + PLC/HMI + vallado, sin la
 # logica de patron de paletizado completo) ~60% del costo BOM de GANTRY.
-ENCAJONADO_L1_USD = round(CAPEX_PALETIZADO_USD["GANTRY_L1_L2"] * 0.60, 2)  # 64,795.8
+ENCAJONADO_L1_USD = 60_000.0
+PCT_MONETIZACION_LABORAL = 0.70
 
 # AIU (Administracion+Imprevistos+Utilidad) de la tarifa de servicios de
 # ULogix (ingenieria+instalacion+capacitacion) sobre el CAPEX de equipo de
@@ -233,7 +232,7 @@ def calcular() -> dict:
         tarifa_ulogix_cop = capex_equipo_ulogix_cop * AIU_TARIFA_ULOGIX
         inversion_ulogix = capex_equipo_ulogix_cop + tarifa_ulogix_cop
         mtto_ulogix = capex_equipo_ulogix_cop * OPEX_MTTO_ULOGIX_PCT
-        ahorro_ulogix = costo_laboral - mtto_ulogix
+        ahorro_ulogix = costo_laboral * PCT_MONETIZACION_LABORAL - mtto_ulogix
         vpn_u, tir_u = _vpn_tir(inversion_ulogix, ahorro_ulogix)
         payback_u = inversion_ulogix / ahorro_ulogix if ahorro_ulogix > 0 else float("inf")
 
@@ -244,7 +243,7 @@ def calcular() -> dict:
         comisionamiento_cop = capex_equipo_com_cop * PCT_COMISIONAMIENTO_COMERCIAL
         inversion_comercial = capex_equipo_com_cop + comisionamiento_cop
         mtto_comercial = capex_equipo_com_cop * OPEX_MTTO_COMERCIAL_PCT
-        ahorro_comercial = costo_laboral - mtto_comercial
+        ahorro_comercial = costo_laboral * PCT_MONETIZACION_LABORAL - mtto_comercial
         vpn_c, tir_c = _vpn_tir(inversion_comercial, ahorro_comercial)
         payback_c = (inversion_comercial / ahorro_comercial
                      if ahorro_comercial > 0 else float("inf"))

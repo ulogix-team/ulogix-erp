@@ -52,7 +52,8 @@ from config import settings
 SKUS = ["P1-CC350-RGB", "P2-QT1500-PET", "P3-GARR25L"]
 
 # ------------------------------ parametros (defaults; ver hoja Parametros en Sheets)
-TRM = 3850.0
+TRM = 3248.87  # SFC, vigente 11-14 jul-2026
+GBP_COP = 4437.0  # referencia GBP/COP jul-2026; editable en Parametros
 FACTOR_RFQ = 0.97
 TMAR_ANUAL = 0.18
 MESES, PREOP = 60, 4
@@ -61,6 +62,7 @@ FACTOR_MONETIZACION = 0.31
 RAMPA_MES5 = 0.67
 SCRAP_PP = 0.0004
 MANT_EVITADO_MES = 85_000_000.0
+AHORRO_LABORAL_MES = 26_781_146.0  # 10 FTE equivalentes x 70% monetizable
 TASA_RENTA = 0.35
 WC_PCT_INGRESO = 0.08
 FASES_CAPEX = [0.20, 0.35, 0.27, 0.18]
@@ -88,13 +90,14 @@ REF_XLSM = {"vpn": 2_180_752_718.0, "tir_anual": 0.2316,
 CAPEX_FILAS = [
     ("Benchmark retrofit", "L2 330 mL", "Upgrade lavadora retornable / prewash (KRONES Lavatec)", 0, "USD", 450_000, 10, "equipos"),
     ("Benchmark retrofit", "L2 330 mL", "Inspeccion envase vacio (HEUFT SPECTRUM II SX)", 0, "USD", 180_000, 7, "automatizacion"),
-    ("Benchmark retrofit", "L2 330 mL", "Retrofit llenadora / tapadora (KRONES Modulfill HES)", 1, "USD", 650_000, 10, "equipos"),
+    ("Maquinaria usada", "L1 350 mL RGB", "Llenadora/tapadora KRONES usada 44.000 bph (VODM/Modulfill; reserva RFQ)", 1, "USD", 550_000, 10, "equipos"),
     ("Benchmark retrofit", "L2 330 mL", "Etiquetadora y sincronizacion (servos)", 0, "USD", 120_000, 7, "automatizacion"),
-    ("Benchmark retrofit", "L2 330 mL", "Conveyors, motores y VFD (ABB retrofit)", 1, "USD", 160_000, 7, "equipos"),
-    ("Benchmark retrofit", "L3 PET 1.5 L", "Bloc soplado-llenado-tapado retrofit (KRONES Contiform)", 0, "USD", 850_000, 10, "equipos"),
+    ("Maquinaria usada", "L1 350 mL RGB", "Conveyors, motores y VFD para llenado y encajonado", 1, "USD", 100_000, 7, "equipos"),
+    ("Diseño ULogix", "L1 350 mL RGB", "Encajonadora custom para canastilla 30x30 (BOM de ingenieria; reserva RFQ)", 1, "USD", 60_000, 10, "automatizacion"),
+    ("Maquinaria usada", "L2 PET 1.5 L", "Llenadora KRONES usada CSD PET 18.000 bph (Mecafill/Contiform; reserva RFQ)", 1, "USD", 425_000, 10, "equipos"),
     ("Benchmark retrofit", "L3 PET 1.5 L", "Inspeccion botella llena (HEUFT PRIME)", 0, "USD", 160_000, 7, "automatizacion"),
-    ("Benchmark retrofit", "L3 PET 1.5 L", "Etiquetado / empaque PET", 1, "USD", 140_000, 7, "equipos"),
-    ("Benchmark retrofit", "L3 PET 1.5 L", "Conveyors / transporte PET", 1, "USD", 210_000, 10, "equipos"),
+    ("Maquinaria usada", "L2 PET 1.5 L", "KRONES Variopac 459 usada para termoencogible (Machinio)", 1, "USD*", 79_900, 7, "equipos"),
+    ("Maquinaria usada", "L2 PET 1.5 L", "Conveyors / transporte PET y enlace al GANTRY compartido", 1, "USD", 90_000, 10, "equipos"),
     ("Benchmark retrofit", "L7 Agua 25 L", "Lavado y sanitizacion garrafon", 0, "USD", 230_000, 10, "equipos"),
     ("Benchmark retrofit", "L7 Agua 25 L", "Skid tratamiento de agua (KRONES Hydronomic)", 0, "USD", 320_000, 10, "equipos"),
     # split de "Llenado / taponado / inspeccion garrafon" ($240k, mismo patron que
@@ -104,24 +107,24 @@ CAPEX_FILAS = [
     # porque garrafon es la linea mas lenta -- 480 und/h, core/tiempos_oee.py -- y
     # un chequeo de nivel de llenado ahi es mecanicamente mas simple que la vision
     # de envase vacio/lleno de L2/L3). Suma exacta = 240_000 (204_000 + 36_000).
-    ("Benchmark retrofit", "L7 Agua 25 L", "Llenado / taponado garrafon", 1, "USD", 204_000, 10, "equipos"),
+    ("Fuera de alcance", "L3 Garrafon 25 L", "Llenado / taponado garrafon (equipo existente suficiente)", 0, "USD", 204_000, 10, "equipos"),
     ("Benchmark retrofit", "L7 Agua 25 L", "Inspeccion garrafon", 0, "USD", 36_000, 10, "automatizacion"),
-    ("Benchmark retrofit", "L7 Agua 25 L", "Conveyors y manipulacion de garrafon", 1, "USD", 110_000, 7, "equipos"),
+    ("Fuera de alcance", "L3 Garrafon 25 L", "Conveyors generales de garrafon (manejo de celda ya esta en BOM)", 0, "USD", 110_000, 7, "equipos"),
     ("Benchmark retrofit", "Comun", "PLC panels / I/O / seguridad (CompactLogix + safety)", 3, "USD", 106_667, 7, "automatizacion"),
     ("Benchmark retrofit", "Comun", "HMIs / estaciones SCADA", 6, "USD", 10_000, 5, "automatizacion"),
     ("Benchmark retrofit", "Comun", "Camaras y vision artificial (Cognex)", 0, "USD", 95_000, 5, "automatizacion"),
     ("Benchmark retrofit", "Comun", "Sensores / transmisores / valvulas (pack)", 1, "USD", 55_000, 5, "automatizacion"),
     ("Benchmark retrofit", "Comun", "Red industrial y ciberseguridad (switches/FW/UPS)", 1, "USD", 75_000, 5, "automatizacion"),
     ("Benchmark retrofit", "Comun", "Servidor edge / historian / gateway MES-UNS (MQTT)", 1, "USD", 90_000, 5, "automatizacion"),
-    ("Servicios", "Comun", "Ingenieria de detalle, FAT/SAT y PMO", 1, "COP", 1_164_000_000, 5, "servicios"),
-    ("Servicios", "Comun", "Instalacion y puesta en marcha (EPC)", 1, "COP", 970_000_000, 5, "servicios"),
-    ("Servicios", "Comun", "Capacitacion y gestion del cambio", 1, "COP", 242_500_000, 3, "intangibles"),
+    ("Servicios", "Comun", "Ingenieria de detalle, FAT/SAT y PMO", 1, "COP", 546_493_840, 5, "servicios"),
+    ("Servicios", "Comun", "Instalacion y puesta en marcha (EPC)", 1, "COP", 964_336_128, 5, "servicios"),
+    ("Servicios", "Comun", "Capacitacion y gestion del cambio", 1, "COP", 179_252_096, 3, "intangibles"),
     # --- Celda GANTRY de paletizado L1-L2 -- BOM real (36 items, total USD 107,993;
     # ver decision de diseno #6: GRP001 de 4 mordazas aqui es DISTINTO del GRP001 de
     # 3 ventosas de L3 mas abajo -- no consolidar, quedan marcados con su referencia.
     ("Celdas roboticas (BOM real)", "L1-L2", "Servomotor MU 300 (ABB)", 1, "USD*", 2_800, 10, "equipos"),
     ("Celdas roboticas (BOM real)", "L1-L2", "Servomotor MU 200 (ABB)", 1, "USD*", 2_000, 10, "equipos"),
-    ("Celdas roboticas (BOM real)", "L1-L2", "Controlador IRC5 (ABB)", 1, "USD*", 18_000, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L1-L2", "Controlador IRC5 (ABB) - cotizacion IGAM, envio/logistica incluidos", 1, "USD*", 6_500, 10, "equipos"),
     ("Celdas roboticas (BOM real)", "L1-L2", "Reductor AB115-005-S2-P2 (Apex Dynamics)", 1, "USD*", 1_100, 10, "equipos"),
     ("Celdas roboticas (BOM real)", "L1-L2", "Eje lineal Rexroth_CKK280_S2200 (Bosch-Rexroth)", 1, "USD*", 5_500, 10, "equipos"),
     ("Celdas roboticas (BOM real)", "L1-L2", "Eje lineal Rexroth_CKR280_S4600 (Bosch-Rexroth)", 1, "USD*", 7_500, 10, "equipos"),
@@ -156,8 +159,8 @@ CAPEX_FILAS = [
     ("Celdas roboticas (BOM real)", "L1-L2", "Fuente de alimentacion DC CP-E 24/10.0 (ABB)", 1, "USD*", 190, 10, "equipos"),
     ("Celdas roboticas (BOM real)", "L1-L2", "HMI CP620 (ABB)", 1, "USD*", 650, 10, "equipos"),
     # --- Celda ROBOT ARTICULADO L3 -- BOM real (24 items, total USD 131,896)
-    ("Celdas roboticas (BOM real)", "L3", "Robot IRB 5710-110/2.3 (ABB)", 1, "USD*", 65_000, 10, "equipos"),
-    ("Celdas roboticas (BOM real)", "L3", "Controlador Omnicore V250XT (ABB)", 1, "USD*", 22_000, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Robot ABB para garrafones - cotizacion EUROBOTS, envio/logistica incluidos", 1, "GBP*", 13_500, 10, "equipos"),
+    ("Celdas roboticas (BOM real)", "L3", "Controlador del robot (incluido en paquete EUROBOTS; no duplicar)", 0, "USD*", 22_000, 10, "equipos"),
     ("Celdas roboticas (BOM real)", "L3", "Transportador PM 9710 (Interroll)", 5, "USD*", 5_500, 10, "equipos"),
     ("Celdas roboticas (BOM real)", "L3", "Gripper neumatico GRP001 3 ventosas 15.5 kg (Manufacturado)", 1, "USD*", 4_500, 10, "equipos"),
     ("Celdas roboticas (BOM real)", "L3", "Generador de vacio OVEM-14-L-B-QO-CE-N-1P (Festo)", 3, "USD*", 320, 10, "equipos"),
@@ -226,8 +229,8 @@ def _num(valor, default: float) -> float:
 
 
 _CLAVES_PARAMETROS = {
-    "TRM", "FACTOR_RFQ", "TMAR_ANUAL", "UPLIFT_THROUGHPUT", "FACTOR_MONETIZACION",
-    "RAMPA_MES5", "SCRAP_PP", "MANT_EVITADO_MES", "TASA_RENTA", "WC_PCT_INGRESO",
+    "TRM", "GBP_COP", "FACTOR_RFQ", "TMAR_ANUAL", "UPLIFT_THROUGHPUT", "FACTOR_MONETIZACION",
+    "RAMPA_MES5", "SCRAP_PP", "MANT_EVITADO_MES", "AHORRO_LABORAL_MES", "TASA_RENTA", "WC_PCT_INGRESO",
     "FASES_CAPEX", "NOMINA_OPERACION_MES",
     "NOMINA_IMPLEMENTACION_MES", "OTROS_FIJOS_BASE_MES", "OTROS_FIJOS_PROYECTO_MES",
     "OPEX_LICENCIAS_MES", "CAPEX_SOFTWARE", "CONTINGENCIA",
@@ -242,6 +245,7 @@ _CLAVES_PARAMETROS = {
 # que nadie mantenga este alias sincronizado con el libro a futuro.
 _ALIAS_PARAMETROS = {
     "trm_cop_usd": "TRM",
+    "gbp_cop": "GBP_COP",
     "factor_rfq_benchmark": "FACTOR_RFQ",
     "tmar_anual": "TMAR_ANUAL",
     "tasa_renta": "TASA_RENTA",
@@ -250,6 +254,7 @@ _ALIAS_PARAMETROS = {
     "rampa_mes5": "RAMPA_MES5",
     "scrap_pp": "SCRAP_PP",
     "mant_evitado_mes": "MANT_EVITADO_MES",
+    "ahorro_laboral_monetizable_mes": "AHORRO_LABORAL_MES",
     "wc_pct_ingreso": "WC_PCT_INGRESO",
     "nomina_operacion_mes": "NOMINA_OPERACION_MES",
     "nomina_implementacion_mes": "NOMINA_IMPLEMENTACION_MES",
@@ -320,6 +325,7 @@ def _parametros(forzar: bool = False) -> dict:
             pass
     return {
         "trm": _num(ov.get("TRM"), TRM),
+        "gbp_cop": _num(ov.get("GBP_COP"), GBP_COP),
         "factor_rfq": _num(ov.get("FACTOR_RFQ"), FACTOR_RFQ),
         "tmar_anual": _num(ov.get("TMAR_ANUAL"), TMAR_ANUAL),
         "uplift_throughput": _num(ov.get("UPLIFT_THROUGHPUT"), UPLIFT_THROUGHPUT),
@@ -327,6 +333,7 @@ def _parametros(forzar: bool = False) -> dict:
         "rampa_mes5": _num(ov.get("RAMPA_MES5"), RAMPA_MES5),
         "scrap_pp": _num(ov.get("SCRAP_PP"), SCRAP_PP),
         "mant_evitado_mes": _num(ov.get("MANT_EVITADO_MES"), MANT_EVITADO_MES),
+        "ahorro_laboral_mes": _num(ov.get("AHORRO_LABORAL_MES"), AHORRO_LABORAL_MES),
         "tasa_renta": _num(ov.get("TASA_RENTA"), TASA_RENTA),
         "wc_pct_ingreso": _num(ov.get("WC_PCT_INGRESO"), WC_PCT_INGRESO),
         "fases_capex": fases,
@@ -386,6 +393,8 @@ def _cop(fila, p: dict) -> float:
         return cant * unit * p["trm"] * p["factor_rfq"]
     if mon == "USD*":                      # cotizacion real: sin factor RFQ
         return cant * unit * p["trm"]
+    if mon == "GBP*":                      # cotizacion real en libras
+        return cant * unit * p["gbp_cop"]
     return cant * unit
 
 
@@ -486,7 +495,8 @@ def flujos_desde_demanda(demanda_mensual: pd.DataFrame | None = None,
     ebitda_p = (ingreso_p - cogs_p - p["nomina_operacion_mes"]
                 - np.where(op, p["otros_fijos_proyecto_mes"], p["otros_fijos_base_mes"])
                 - p["opex_licencias_mes"] + ahorro_scrap
-                + p["mant_evitado_mes"] * rampa)
+                + p["mant_evitado_mes"] * rampa
+                + p["ahorro_laboral_mes"] * rampa)
     ebitda_inc = ebitda_p - ebitda_b
 
     dep = np.where(op, dep_mes, 0.0)
@@ -502,7 +512,9 @@ def flujos_desde_demanda(demanda_mensual: pd.DataFrame | None = None,
             "ebitda_base": ebitda_b, "ebitda_proyecto": ebitda_p,
             "ingreso_base": ingreso_b, "ingreso_proyecto": ingreso_p,
             "cogs_base": cogs_b, "cogs_proyecto": cogs_p,
-            "ahorro_scrap": ahorro_scrap, "depreciacion": dep,
+            "ahorro_scrap": ahorro_scrap,
+            "ahorro_laboral": p["ahorro_laboral_mes"] * rampa,
+            "depreciacion": dep,
             "impuesto": impuesto, "capital_trabajo": wc, "capex": cx,
             "unidades": u, "dep_mensual": dep_mes, "parametros": p}
 

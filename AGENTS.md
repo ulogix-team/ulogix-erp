@@ -619,6 +619,21 @@ nombres de servicio.
     las 3 líneas juntas, no con el ahorro de mano de obra de L3 aislado),
     pero no se pagaría sola si el criterio fuera únicamente esta decisión.
 
+23. **2026-07: alcance ULogix y CAPEX multimoneda revisados con cotizaciones.**
+    La evaluación de paletizado deja de ser paralela y entra al modelo principal.
+    L1 incorpora encajonadora custom 30x30, llenadora KRONES usada de 44.000 bph
+    y el GANTRY ABB compartido; L2 incorpora llenadora KRONES usada de 18.000
+    bph, Variopac usada y alterna el mismo GANTRY; L3 conserva su llenadora de
+    600 gfn/h y solo incorpora la celda robotica. Cotizaciones informadas por el
+    propietario: robot L3 EUROBOTS GBP 13.500 e IRC5 IGAM USD 6.500, ambos con
+    envio/logistica. `GBP*` es moneda soportada en CAPEX mediante `gbp_cop`.
+    `Viabilidad_Automatizacion` monetiza inicialmente 70% de 10 FTE manuales
+    equivalentes (editable) e integra ese ahorro al EBITDA Python y Sheets.
+    `Proveedores_CAPEX` registra cotizaciones, listados usados y descartes por
+    capacidad. `Tiempos_Resumen` es la portada ejecutiva antes/despues; `Tiempos`
+    conserva la auditoria completa. `APU_Ingenieria` desglosa NX, Tecnomatix,
+    RobotStudio, Ignition, MES/UNS Coreflux, ERP/Odoo, FAT/SAT e instalacion.
+
 ## Estado actual (validado)
 
 - Pronóstico v4 sobre 21 trimestres reales de KOF: MAPE 2.9/2.9/2.1 %.
@@ -637,21 +652,18 @@ nombres de servicio.
   #1 (el ERP sigue sin gestionar OEE/TEEP en vivo, eso solo llega por MQTT).
   MRP/compras (*Órdenes Odoo*) y finanzas (*Finanzas*, comparación Base vs.
   escenario) ya usaban `demanda_activa()` desde antes.
-- Caso de negocio (demanda v4, CAPEX recortado — decisión #15, sin lavadoras
-  ni inspección de línea, celdas robóticas a detalle de BOM real; sin
-  supuesto de crecimiento de demanda — decisión #20, el horizonte de 60
-  meses repite el patrón de 12 meses del ERP sin inflarlo): CAPEX $12.188 M
-  · EBITDA incremental $13.119 M (12 m operativos) · **VPN $15.935 M · TIR
-  83.8 % E.A. · ROI 242.8 % · payback 21/24 m**.
+- Caso de negocio vivo (alcance decisión #23): CAPEX $9.080 M · EBITDA
+  incremental $9.252 M (12 m operativos) · **VPN $10.729 M · TIR 76.7 %
+  E.A. · ROI 222.4 % · payback 22/26 m**.
 - Libro Excel: 23 hojas, 3.741 fórmulas, **0 errores** tras recalcular (cifras
   del caso de negocio pendientes de regenerar el libro con el CAPEX nuevo).
 - `tools/verificacion.py`: **17/17 en verde**.
 - Libro de Sheets real (2026-07, tras la reconstrucción de la decisión #17):
-  `Tiempos` consolidada (10 bloques, MLT/VSM y máquinas reales incluidos),
+  `Tiempos` consolidada + `Tiempos_Resumen` ejecutivo,
   OEE objetivo +5% exacto por línea, `RRHH` centralizada (28 personas, carga
   prestacional colombiana documentada, reconcilia exacto: Operación
   $85.915.382, Implementación $87.161.760), `CAPEX` en 8 bloques por área
-  (84 filas, mismo total de siempre), hoja `Dashboard` nueva como primera
+  (85 filas de datos, total vivo $9.080 M), hoja `Dashboard` nueva como primera
   pestaña. `OEE_TEEP`/`Personal`/`Empleados` ya no existen (contenido
   migrado, ver decisión #17).
 

@@ -139,7 +139,8 @@ ind = (indicadores(dem_activa, nombre_activo)
 st.caption(f"El FCF de 60 meses se construye **desde el pronostico de demanda por "
            f"SKU** (escenario activo: **{nombre_activo}**), con margenes del "
            "maestro de productos, uplift +11% x monetizacion 31%, ahorro de "
-           "scrap, mantenimiento evitado, depreciacion/impuestos y capital de "
+           "scrap, mantenimiento evitado, ahorro laboral monetizable, "
+           "depreciacion/impuestos y capital de "
            "trabajo. El mismo motor vive como formulas en las hojas "
            "**Financiero** (base) y **FinancieroEscenario** (demanda elegida "
            "en el ERP) del libro conectado.")
@@ -205,6 +206,19 @@ st.caption(f"EBITDA incremental (12 meses operativos): "
            f"{ind['delta_vs_modelo_original']['vpn_pct']:+.1f}% — la diferencia "
            "es esperada: este motor deriva el flujo de la demanda real por SKU "
            "con depreciacion e impuestos explicitos.")
+
+viab = cont.leer_viabilidad_automatizacion()
+if not viab.empty:
+    with st.expander("Antes vs. automatización ULogix vs. alternativa comercial"):
+        st.caption("El ahorro laboral es FTE equivalente y monetiza inicialmente 70%; "
+                   "el porcentaje es editable en `Parametros` para representar "
+                   "reasignación, rotación natural o ahorro efectivo.")
+        st.dataframe(viab, width="stretch", hide_index=True)
+
+proveedores = cont.leer_proveedores_capex()
+if not proveedores.empty:
+    with st.expander("Proveedores, cotizaciones y maquinaria usada evaluada"):
+        st.dataframe(proveedores, width="stretch", hide_index=True)
 
 if st.button("📗 Sincronizar demanda al libro (Base -> Demanda · activo -> DemandaEscenario)"):
     from integrations.sheets_client import Contabilidad

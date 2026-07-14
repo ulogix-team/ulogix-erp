@@ -649,6 +649,15 @@ nombres de servicio.
     `tools/qa_erp_funcional.py --flujo-completo` prueba las integraciones reales;
     `tools/verificacion.py` conserva 17 pruebas aisladas sin escribir externamente.
 
+24. **2026-07: alcance ULogix y CAPEX multimoneda revisados con cotizaciones.**
+    L1: encajonadora custom 30x30, KRONES usada 44.000 bph y GANTRY compartido.
+    L2: KRONES usada 18.000 bph, Variopac usada y el mismo GANTRY alternado.
+    L3: llenadora existente 600 gfn/h y solo celda robotica. Cotizaciones:
+    EUROBOTS GBP 13.500 (robot L3) e IGAM USD 6.500 (IRC5), con logistica.
+    El ahorro laboral monetizable (70% inicial de 10 FTE equivalentes, editable)
+    entra al EBITDA; proveedores, APU digital y tiempos antes/despues quedan
+    documentados en hojas vivas del libro.
+
 ## Estado actual (validado)
 
 - Pronóstico v4 sobre 21 trimestres reales de KOF: MAPE 2.9/2.9/2.1 %.
@@ -667,12 +676,9 @@ nombres de servicio.
   #1 (el ERP sigue sin gestionar OEE/TEEP en vivo, eso solo llega por MQTT).
   MRP/compras (*Órdenes Odoo*) y finanzas (*Finanzas*, comparación Base vs.
   escenario) ya usaban `demanda_activa()` desde antes.
-- Caso de negocio vivo (demanda v4, CAPEX recortado — decisión #15, sin lavadoras
-  ni inspección de línea, celdas robóticas a detalle de BOM real; sin
-  supuesto de crecimiento de demanda — decisión #20, el horizonte de 60
-  meses repite el patrón de 12 meses del ERP sin inflarlo): CAPEX $12.188 M
-  · **VPN $7.448 M · TIR 48.9 % E.A. · ROI 139.4 % · payback 28/34 m**,
-  con precios base gobernados por `Maestro_Productos` en Sheets.
+- Caso de negocio vivo (alcance decisión #24): CAPEX $9.080 M · **VPN
+  $10.729 M · TIR 76.7 % E.A. · ROI 222.4 % · payback 22/26 m**, con
+  precios base gobernados por `Maestro_Productos` en Sheets.
 - Libro de Sheets: 36 hojas, **4.082 fórmulas y 0 errores** en la auditoría
   completa del 2026-07.
 - Despliegue Docker validado en Windows: dashboard y middleware levantan con
@@ -680,11 +686,11 @@ nombres de servicio.
   statsmodels 0.14.6 y el pronóstico de 12 meses (MAPE 2.91/2.91/2.05 %).
   Windows Defender/Application Control no interviene en ese runtime Linux.
 - Libro de Sheets real (2026-07, tras la reconstrucción de la decisión #17):
-  `Tiempos` consolidada (10 bloques, MLT/VSM y máquinas reales incluidos),
+  `Tiempos` consolidada + `Tiempos_Resumen` ejecutivo,
   OEE objetivo +5% exacto por línea, `RRHH` centralizada (28 personas, carga
   prestacional colombiana documentada, reconcilia exacto: Operación
   $85.915.382, Implementación $87.161.760), `CAPEX` en 8 bloques por área
-  (84 filas, mismo total de siempre), hoja `Dashboard` nueva como primera
+  (85 filas de datos, total vivo $9.080 M), hoja `Dashboard` nueva como primera
   pestaña. `OEE_TEEP`/`Personal`/`Empleados` ya no existen (contenido
   migrado, ver decisión #17).
 - Integraciones reales validadas: Odoo SaaS 19.3 con 3 productos/BOM, 13

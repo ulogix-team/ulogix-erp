@@ -24,17 +24,20 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from integrations.sheets_client import Contabilidad
+from core.finanzas_negocio import CAPEX_FILAS
 
 TRM_CELL = "Parametros!$B$5"
 RFQ_CELL = "Parametros!$B$6"
 CONTINGENCIA_CELL = "Parametros!$B$27"
+GBP_COP_CELL = 'INDEX(Parametros!$B:$B;MATCH("gbp_cop";Parametros!$A:$A;0))'
 
 
 def _formula_fila(fila: int) -> str:
     """D=cantidad, E=moneda, F=costo_unitario, G=CAPEX COP (esta celda)."""
     return (f'=IF($E{fila}="COP";$D{fila}*$F{fila};'
            f'IF($E{fila}="USD*";$D{fila}*$F{fila}*{TRM_CELL};'
-           f'$D{fila}*$F{fila}*{TRM_CELL}*{RFQ_CELL}))')
+           f'IF($E{fila}="GBP*";$D{fila}*$F{fila}*{GBP_COP_CELL};'
+           f'$D{fila}*$F{fila}*{TRM_CELL}*{RFQ_CELL})))')
 
 
 def main() -> None:
@@ -77,6 +80,17 @@ def main() -> None:
 
     print(f"{len(filas_datos)} filas de datos, {len(filas_subtotal_bloque)} subtotales de "
          f"bloque, pie en filas {fila_subtotal_general}/{fila_contingencia}/{fila_total}")
+
+    # Una reorganizacion hecha sobre valores formateados puede convertir
+    # costos como "$75.000" en texto. Restablece F desde el seed en el mismo
+    # orden; APU_Ingenieria vuelve a enlazar despues sus tres filas Servicios.
+    if len(filas_datos) != len(CAPEX_FILAS):
+        raise RuntimeError("CAPEX vivo y CAPEX_FILAS tienen longitudes distintas; "
+                           "no es seguro normalizar costo_unitario")
+    ws.batch_update(
+        [{"range": f"F{r}", "values": [[fila[5]]]} for r, fila in zip(filas_datos, CAPEX_FILAS)],
+        value_input_option="USER_ENTERED",
+    )
 
     # construye la columna G completa (desde la primera fila de datos hasta
     # el pie) en un solo arreglo, para escribirla en UNA sola llamada

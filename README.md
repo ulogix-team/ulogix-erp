@@ -8,9 +8,9 @@ finanzas del retrofit (ROI/VPN/TIR).
 
 **Modelo de negocio (retrofit brownfield de las 3 líneas existentes):**
 +11% throughput · OEE 83% → ≥86% (fase 1: **+5% relativo justificado**) ·
-+5% flujo de caja · celdas robóticas de paletizado (BOM real USD 239.889) ·
-modernización de llenadoras únicamente · gemelo digital por equipo ·
-trazabilidad MES/Cloud.
++5% flujo de caja · encajonadora custom L1 · GANTRY ABB compartido L1-L2 ·
+robot ABB para garrafones L3 · llenadoras KRONES usadas L1/L2 · Variopac
+usada L2 · gemelos digitales, SCADA, MES/UNS y ERP/Odoo.
 
 ---
 
@@ -34,6 +34,13 @@ trazabilidad MES/Cloud.
 
 Regla de red del stack: fuera de Docker, conectarse por la **IP LAN del host**
 (no `localhost` ni hostnames de servicios Docker).
+
+## Trazabilidad del uso de IA
+
+El proyecto utiliza asistencia de inteligencia artificial para análisis,
+documentación y revisión de código. Las decisiones de ingeniería, cifras,
+validaciones y publicaciones son revisadas por el equipo humano. Las herramientas
+de IA no figuran como autoras, coautoras ni colaboradoras de los commits.
 
 ## Arranque
 
@@ -75,9 +82,9 @@ Guía completa paso a paso: **`docs/INTEGRACION_APIS.md`**.
    publicador de prueba y contrato completo del UNS.
 6. **Finanzas** — P&L del libro de producción + **caso de negocio conectado
    a la demanda** (base vs escenario activo, sin supuesto de crecimiento —
-   sigue siempre la demanda que manda el ERP): CAPEX $12.188M COP · EBITDA
-   incremental ~$13.119M (12 m op.) · **VPN $15.935M · TIR 83,8% E.A. · ROI
-   242,8% · payback 21/24 m** + sincronización al libro de Drive.
+   sigue siempre la demanda que manda el ERP): CAPEX $9.080M COP · EBITDA
+   incremental $9.252M (12 m op.) · **VPN $10.729M · TIR 76,7% E.A. · ROI
+   222,4% · payback 22/26 m** + sincronización al libro de Drive.
 7. **Pruebas** — diagnóstico en vivo: eco MQTT al UNS, Odoo
    (authenticate + PO de prueba), Sheets (escribir/releer + leer Parámetros).
 8. **Base de datos** — navegador de las 10 tablas ERP con exportación CSV y

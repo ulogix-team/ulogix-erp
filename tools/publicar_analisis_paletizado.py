@@ -253,6 +253,8 @@ def _aplicar_formulas(filas: list[list]) -> None:
 
 
 def main() -> None:
+    raise SystemExit("Analisis_Paletizado fue migrado al modelo principal. "
+                     "Use: python tools/actualizar_alcance_ulogix.py")
     cont = Contabilidad()
     if cont.modo != "sheets":
         raise SystemExit("Sheets no esta configurado (.env) — esta hoja no tiene "
