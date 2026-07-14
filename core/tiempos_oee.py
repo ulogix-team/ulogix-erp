@@ -43,14 +43,12 @@ fuente -> calidad). El +5% se alcanza al cierre del mes 4 de preoperacion
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import sys
 
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from config import settings
 
 # ------------------- datos corregidos (Tiempos_Fontibon_Corregido) ----------
 LINEAS = ["L1", "L2", "L3"]
@@ -67,6 +65,40 @@ DATOS = {
                rp_nominal=480, rp_diseno=520, turnos=1, horas_turno=8,
                dias_ano=120, und_pallet=30, q_lote=2880, pallets_lote=96,
                re_microparos=0.917808, mlt_lote_h=15.573906),
+}
+
+# El estudio separa deliberadamente el estado medido ANTES del proyecto y el
+# estado de diseno DESPUES de ejecutar el CAPEX.  DATOS conserva el contrato
+# historico (estado base) porque otros modulos lo usan para resolver SKU/linea.
+# Las tasas de DESPUES solo cambian cuando el equipo realmente esta incluido
+# en el CAPEX vivo: L1 recupera la tasa de diseno con el retrofit Modulfill;
+# L2 conserva el Contiform de 12.000 u/h (su retrofit esta excluido, cantidad
+# 0); L3 elimina el cuello manual de 480 gfn/h y queda limitada por la nueva
+# llenadora/tapadora de 600 gfn/h.  El tercer turno de L1/L2 es una condicion
+# operativa del estado proyecto, separada del aumento tecnologico de capacidad.
+DATOS_DESPUES = {
+    "L1": dict(rp_nominal=45000, rp_diseno=45000, turnos=3),
+    "L2": dict(rp_nominal=12000, rp_diseno=13000, turnos=3),
+    "L3": dict(rp_nominal=600, rp_diseno=600, turnos=1),
+}
+
+MAQUINAS_ESTADO = {
+    "L1": {
+        "antes": "KRONES Mecafill usada 42.500 u/h + paletizado manual",
+        "despues": "Retrofit KRONES Modulfill HES 45.000 u/h + celda GANTRY ABB",
+        "intervencion": "Retrofit llenadora/tapadora, conveyors/VFD y GANTRY L1-L2",
+    },
+    "L2": {
+        "antes": "KRONES Contiform Bloc 2004 12.000 u/h + paletizado manual",
+        "despues": "Contiform 12.000 u/h + celda GANTRY ABB + etiquetado/transporte",
+        "intervencion": ("El bloc de llenado no cambia (CAPEX=0); se automatiza "
+                         "paletizado y se intervienen etiquetado/transporte"),
+    },
+    "L3": {
+        "antes": "Monoblock 600 gfn/h limitado por paletizado manual a 480 gfn/h",
+        "despues": "Llenadora/tapadora 600 gfn/h + robot ABB IRB 5710",
+        "intervencion": "Nueva llenadora/tapadora y celda robotica de paletizado",
+    },
 }
 TT, TIP, TNP, TSU_MIN, Q_CALIDAD = 8.0, 1.1667, 0.75, 70, 0.99932
 # reparto 50/30/20% del Δpp EXACTO que cada linea necesita para llegar a
@@ -107,8 +139,9 @@ def _mejora_pp_linea(linea: str, factor: float = 1.05) -> dict:
 
 
 def _params() -> dict:
-    return json.load(open(settings.DATA_DIR / "parametros_planta.json",
-                          encoding="utf-8"))
+    """Parámetros de planta desde Sheets o el fixture local, según el modo."""
+    from core.forecast import cargar_parametros
+    return cargar_parametros()
 
 
 def unidades_por_pallet(linea: str) -> int:
@@ -128,29 +161,88 @@ def componentes_oee(linea: str) -> dict:
                 OEE=oee, carga=carga, TEEP=oee * carga, Ter=ter, Tep=tep)
 
 
-def tabla_tiempos(demanda_mensual: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Estudio de tiempos por linea (documental, formulas APM del archivo
-    corregido): Tc, T_D, takt (si hay demanda), Tb, Tp, Rp_lote, MLT, lote."""
+def _datos_estado(linea: str, estado: str) -> dict:
+    """Entradas fisicas de una linea para ``antes`` o ``despues``."""
+    if estado not in {"antes", "despues"}:
+        raise ValueError("estado debe ser 'antes' o 'despues'")
+    d = dict(DATOS[linea])
+    if estado == "despues":
+        d.update(DATOS_DESPUES[linea])
+    d["equipo_critico"] = MAQUINAS_ESTADO[linea][estado]
+    d["intervencion"] = MAQUINAS_ESTADO[linea]["intervencion"]
+    return d
+
+
+def _oee_estado(linea: str, estado: str, factor: float | None = None) -> float:
+    base = componentes_oee(linea)["OEE"]
+    if estado == "antes":
+        return base
+    if factor is None:
+        factor = _params().get("mejora_oee", {}).get("factor", 1.05)
+    return min(base * float(factor), 1.0)
+
+
+def _q_lote_estado(linea: str, estado: str, oee: float) -> int:
+    d = _datos_estado(linea, estado)
+    if estado == "antes":
+        return int(d["q_lote"])
+    produccion_turno = d["rp_nominal"] * d["horas_turno"] * oee
+    return max(d["und_pallet"], round(produccion_turno / d["und_pallet"]) * d["und_pallet"])
+
+
+def _mlt_estado(linea: str, estado: str, q_lote: int) -> float:
+    """MLT proyectado conservando esperas del VSM y cambiando la corrida.
+
+    El MLT base es medido/auditado. Para DESPUES aun no existe una medicion de
+    comisionamiento; por eso se conserva la porcion no productiva del VSM y se
+    reemplaza unicamente la corrida del lote por el nuevo ciclo y lote.
+    """
+    d0 = _datos_estado(linea, "antes")
+    if estado == "antes":
+        return float(d0["mlt_lote_h"])
+    d1 = _datos_estado(linea, "despues")
+    ciclo0 = 3600 / d0["rp_nominal"]
+    ciclo1 = 3600 / d1["rp_nominal"]
+    no_productivo = d0["mlt_lote_h"] - (d0["q_lote"] - 1) * ciclo0 / 3600
+    return no_productivo + (q_lote - 1) * ciclo1 / 3600
+
+
+def tabla_tiempos(demanda_mensual: pd.DataFrame | None = None,
+                  estado: str = "antes") -> pd.DataFrame:
+    """Tiempos por linea para el estado ANTES o DESPUES del proyecto.
+
+    ``antes`` reproduce el estudio auditado. ``despues`` aplica equipos,
+    turnos y OEE del diseno de proyecto; su MLT es una proyeccion hasta que
+    existan mediciones de comisionamiento.
+    """
+    factor = _params().get("mejora_oee", {}).get("factor", 1.05)
     filas = []
     for lin in LINEAS:
-        d, c = DATOS[lin], componentes_oee(lin)
+        d, c = _datos_estado(lin, estado), componentes_oee(lin)
+        oee = _oee_estado(lin, estado, factor)
+        q_lote = _q_lote_estado(lin, estado, oee)
         tc = 3600 / d["rp_nominal"]
-        tb_h = TSU_MIN / 60 + d["q_lote"] * tc / 3600
-        tp_s = tb_h * 3600 / d["q_lote"]
+        tb_h = TSU_MIN / 60 + q_lote * tc / 3600
+        tp_s = tb_h * 3600 / q_lote
         fila = dict(
-            linea=lin, producto=d["producto"],
+            estado=estado, linea=lin, producto=d["producto"],
+            equipo_critico=d["equipo_critico"], intervencion=d["intervencion"],
             rp_nominal_uph=d["rp_nominal"], rp_diseno_uph=d["rp_diseno"],
             ciclo_Tc_s=round(tc, 4), turnos=d["turnos"],
             horas_turno=d["horas_turno"], dias_operativos_ano=d["dias_ano"],
+            oee_aplicado=round(oee, 4),
             tsu_alistamiento_min=TSU_MIN,
-            q_lote_turno_und=d["q_lote"], pallets_por_lote=d["pallets_lote"],
+            q_lote_turno_und=q_lote,
+            pallets_por_lote=round(q_lote / d["und_pallet"]),
             unidades_por_pallet=d["und_pallet"],
             tb_lote_h=round(tb_h, 3), tp_s_por_und=round(tp_s, 4),
             rp_lote_uph=round(3600 / tp_s, 0),
-            mlt_lote_h=d["mlt_lote_h"],
+            mlt_lote_h=round(_mlt_estado(lin, estado, q_lote), 3),
+            mlt_tipo=("medido/auditado" if estado == "antes"
+                      else "proyectado; validar en comisionamiento"),
             capacidad_efectiva_anual_und=round(
                 d["rp_nominal"] * d["turnos"] * d["horas_turno"]
-                * d["dias_ano"] * c["OEE"]),
+                * d["dias_ano"] * oee),
         )
         if demanda_mensual is not None:
             sku = d["sku"]
@@ -159,9 +251,11 @@ def tabla_tiempos(demanda_mensual: pd.DataFrame | None = None) -> pd.DataFrame:
             fila["takt_s_por_und"] = round(t_d / max(dem_dia, 1), 4)
             fila["U_utilizacion"] = round(
                 dem_dia * 12 / 12 / (fila["capacidad_efectiva_anual_und"] / d["dias_ano"]), 3)
-        if lin == "L3":
+        if lin == "L3" and estado == "antes":
             fila["nota"] = ("Cuello real: paletizado MANUAL (2 op x 240 gfn/h); "
                             "con 1 operario U=1.61 -> la celda robotica lo elimina")
+        elif estado == "despues":
+            fila["nota"] = d["intervencion"]
         filas.append(fila)
     return pd.DataFrame(filas)
 
@@ -202,8 +296,10 @@ def tabla_oee() -> pd.DataFrame:
     return pd.DataFrame(filas)
 
 
-def tabla_capacidad(demanda_mensual: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Capacidad efectiva vs demanda (hallazgo del archivo corregido)."""
+def tabla_capacidad(demanda_mensual: pd.DataFrame | None = None,
+                    estado: str = "antes") -> pd.DataFrame:
+    """Capacidad efectiva vs demanda en un estado fisico definido."""
+    factor = _params().get("mejora_oee", {}).get("factor", 1.05)
     filas = []
     dem_anual = {}
     if demanda_mensual is not None:
@@ -212,12 +308,15 @@ def tabla_capacidad(demanda_mensual: pd.DataFrame | None = None) -> pd.DataFrame
                 demanda_mensual[f"{DATOS[lin]['sku']}_unidades"].sum())
     ref_2026 = {"L1": 186_953_224, "L2": 54_436_369, "L3": 277_477}
     for lin in LINEAS:
-        d, c = DATOS[lin], componentes_oee(lin)
-        cap = d["rp_nominal"] * d["turnos"] * d["horas_turno"] * d["dias_ano"] * c["OEE"]
+        d = _datos_estado(lin, estado)
+        oee = _oee_estado(lin, estado, factor)
+        cap = d["rp_nominal"] * d["turnos"] * d["horas_turno"] * d["dias_ano"] * oee
         dem = dem_anual.get(lin, ref_2026[lin])
-        cap3 = d["rp_nominal"] * 3 * d["horas_turno"] * 286 * c["OEE"]
+        cap3 = d["rp_nominal"] * 3 * d["horas_turno"] * 286 * oee
         filas.append(dict(
-            linea=lin, demanda_2026_und=round(dem),
+            estado=estado, linea=lin, demanda_2026_und=round(dem),
+            equipo_critico=d["equipo_critico"], oee_aplicado=round(oee, 4),
+            turnos=d["turnos"],
             capacidad_efectiva_und=round(cap),
             U_turnos_actuales=round(dem / cap, 3),
             capacidad_3_turnos_und=round(cap3),
@@ -225,6 +324,50 @@ def tabla_capacidad(demanda_mensual: pd.DataFrame | None = None) -> pd.DataFrame
             dictamen=("INFACTIBLE con turnos actuales -> requiere 3er turno"
                       if dem / cap > 1 else "Factible con turnos actuales"),
         ))
+    return pd.DataFrame(filas)
+
+
+def tabla_capacidad_comparada(
+        demanda_mensual: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Comparacion trazable ANTES vs DESPUES para ERP/Sheets/Dashboard."""
+    antes = tabla_capacidad(demanda_mensual, "antes").set_index("linea")
+    despues = tabla_capacidad(demanda_mensual, "despues").set_index("linea")
+    t0 = tabla_tiempos(demanda_mensual, "antes").set_index("linea")
+    t1 = tabla_tiempos(demanda_mensual, "despues").set_index("linea")
+    filas = []
+    for lin in LINEAS:
+        d0, d1 = _datos_estado(lin, "antes"), _datos_estado(lin, "despues")
+        oee1 = float(despues.loc[lin, "oee_aplicado"])
+        cap_mismos_turnos = (d1["rp_nominal"] * d0["turnos"] * d1["horas_turno"]
+                             * d1["dias_ano"] * oee1)
+        cap0 = float(antes.loc[lin, "capacidad_efectiva_und"])
+        cap1 = float(despues.loc[lin, "capacidad_efectiva_und"])
+        u0 = float(antes.loc[lin, "U_turnos_actuales"])
+        u1 = float(despues.loc[lin, "U_turnos_actuales"])
+        filas.append({
+            "linea": lin,
+            "demanda_anual_und": int(antes.loc[lin, "demanda_2026_und"]),
+            "equipo_antes": d0["equipo_critico"],
+            "equipo_despues": d1["equipo_critico"],
+            "rp_antes_uph": d0["rp_nominal"], "rp_despues_uph": d1["rp_nominal"],
+            "ciclo_antes_s": t0.loc[lin, "ciclo_Tc_s"],
+            "ciclo_despues_s": t1.loc[lin, "ciclo_Tc_s"],
+            "oee_antes": antes.loc[lin, "oee_aplicado"],
+            "oee_despues": despues.loc[lin, "oee_aplicado"],
+            "turnos_antes": d0["turnos"], "turnos_despues": d1["turnos"],
+            "q_antes_und": t0.loc[lin, "q_lote_turno_und"],
+            "q_despues_und": t1.loc[lin, "q_lote_turno_und"],
+            "mlt_antes_h": t0.loc[lin, "mlt_lote_h"],
+            "mlt_despues_h": t1.loc[lin, "mlt_lote_h"],
+            "capacidad_antes_und": round(cap0),
+            "capacidad_despues_mismos_turnos_und": round(cap_mismos_turnos),
+            "capacidad_despues_und": round(cap1),
+            "U_antes": round(u0, 3), "U_despues": round(u1, 3),
+            "incremento_capacidad_pct": round(cap1 / cap0 - 1, 4),
+            "dictamen_antes": ("Factible" if u0 <= 1 else "INFACTIBLE"),
+            "dictamen_despues": ("Factible" if u1 <= 1 else "INFACTIBLE"),
+            "condicion_proyecto": d1["intervencion"],
+        })
     return pd.DataFrame(filas)
 
 

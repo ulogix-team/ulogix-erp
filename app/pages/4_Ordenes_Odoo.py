@@ -8,7 +8,6 @@ import streamlit as st
 
 from app.ui import theme
 from config import settings
-from core.inventario import plan_compras
 from integrations import state_store
 from integrations.odoo_client import LineaPedido, OdooClient
 
@@ -35,7 +34,14 @@ c1, c2 = st.columns(2)
 scrap = c1.slider("Scrap", 0.0, 0.10, 0.02, 0.005, format="%.3f")
 cobertura = c2.slider("Meses a convertir en ordenes", 1, 12, 1)
 
-plan = plan_compras(dem, scrap=scrap, cobertura_meses=cobertura)
+try:
+    plan = pd.DataFrame(odoo.plan_compras_desde_demanda(
+        dem, scrap=scrap, cobertura_meses=cobertura))
+except Exception as exc:  # noqa: BLE001
+    st.error(f"No se pudo explotar el MRP desde Odoo: {exc}")
+    st.caption("Esta página no usará `data/bom.csv` como sustituto. Verifica BOM, "
+               "proveedores, precios, MOQ y stock directamente en Odoo.")
+    st.stop()
 grupos = (plan.groupby(["proveedor", "etiqueta_mes", "producto"])
           .agg(lineas=("componente", "count"),
                unidades_producto=("unidades_producto_mes", "first"),
@@ -88,12 +94,6 @@ if st.button("🛒 Crear ordenes en Odoo", type="primary", disabled=not sel_refs
         if avanzar and not res.get("facturada"):
             avisos.append(f"⚠️ {res['name']}: la factura de proveedor no se pudo "
                           "generar (ver Auditoria abajo para el detalle).")
-        if res.get("recibida"):  # insumos ya en bodega -> entra al stock local de materia prima
-            for l in lineas_df.itertuples():
-                state_store.ajustar_stock("componente", l.componente, float(l.cantidad),
-                                          "recepcion_po", descripcion=l.descripcion,
-                                          uom=l.uom, referencia=res["name"])
-
         # una sola orden de fabricacion por (producto, mes): la comparten las
         # POs de distintos proveedores que abastecen el mismo lote
         clave_mo = (g.producto, g.etiqueta_mes)
@@ -104,14 +104,6 @@ if st.button("🛒 Crear ordenes en Odoo", type="primary", disabled=not sel_refs
                 confirmar=avanzar, reservar=avanzar)
         mo = ordenes_fabricacion[clave_mo]
 
-        state_store.registrar_po(po_name=res["name"], sku=g.producto,
-                                 qty_objetivo=float(g.unidades_producto),
-                                 odoo_id=res.get("id"),
-                                 proveedor=g.proveedor,
-                                 componente=f"{g.lineas} componentes",
-                                 detalle=g.referencia,
-                                 mo_id=mo.get("id"), mo_name=mo.get("name"),
-                                 insumos_recibidos=res.get("recibida", avanzar))
         creadas.append(f"{res['name']} → {mo['name']}")
         barra.progress(i / len(sel))
     st.success(f"{len(creadas)} ordenes de compra "
@@ -133,8 +125,18 @@ if st.button("🛒 Crear ordenes en Odoo", type="primary", disabled=not sel_refs
 st.divider()
 
 # ------------------------------------------------------------------ seguimiento
-st.subheader("2 · 🔗 Seguimiento de ordenes vinculadas")
-pos = state_store.listar_pos()
+st.subheader("2 · 🔗 Órdenes vigentes en Odoo")
+try:
+    c1, c2 = st.columns(2)
+    c1.dataframe(pd.DataFrame(odoo.listar_ordenes(100)), width="stretch", hide_index=True)
+    c2.dataframe(pd.DataFrame(odoo.listar_ordenes_fabricacion(100)), width="stretch", hide_index=True)
+except Exception as exc:  # noqa: BLE001
+    st.error(f"No se pudo consultar Odoo: {exc}")
+
+st.subheader("3 · Cola operativa MQTT/UNS (Odoo)")
+st.caption("Secuencia, objetivo, avance MES y cantidad sincronizada viven en "
+           "campos `x_ulogix_*` de `mrp.production`.")
+pos = odoo.listar_mo_ulogix_activas()
 if not pos:
     st.info("Aun no hay ordenes vinculadas. Crea ordenes arriba; luego alimenta "
             "produccion por MQTT (pagina *Produccion MQTT*).")
@@ -145,24 +147,15 @@ else:
             avance = min(1.0, p["qty_producida"] / max(p["qty_objetivo"], 1e-9))
             c1, c2 = st.columns([3, 1])
             with c1:
-                insumo_icono = "📦" if p.get("insumos_recibidos") else "⏳"
                 st.progress(avance,
-                            text=f"{iconos.get(p['estado'],'⚪')} **{p['po_name']}** · "
+                            text=f"{iconos.get(p['estado'],'⚪')} **{p['mo_name']}** · "
                                  f"{p['sku']} · {p['qty_producida']:,.0f} / "
-                                 f"{p['qty_objetivo']:,.0f} un · {p['proveedor']} · "
-                                 f"{insumo_icono} MO `{p.get('mo_name') or '—'}`")
+                                 f"{p['qty_objetivo']:,.0f} un · "
+                                 f"sync Odoo {p['qty_sincronizada_odoo']:,.0f}")
             with c2:
-                st.caption(f"`{p['estado']}`<br/>{p['actualizado_ts'][:16]}",
+                st.caption(f"`{p['state']}`<br/>secuencia {p['x_ulogix_sequence']}",
                            unsafe_allow_html=True)
 
-with st.expander("Ordenes en Odoo (lectura directa de la API)"):
-    c1, c2 = st.columns(2)
-    if c1.button("Consultar purchase.order"):
-        st.dataframe(pd.DataFrame(odoo.listar_ordenes()), width="stretch",
-                     hide_index=True)
-    if c2.button("Consultar mrp.production"):
-        st.dataframe(pd.DataFrame(odoo.listar_ordenes_fabricacion()), width="stretch",
-                     hide_index=True)
 with st.expander("Auditoria (log_acciones)"):
     st.dataframe(pd.DataFrame(state_store.ultimo_log(60)), width="stretch",
                  hide_index=True)

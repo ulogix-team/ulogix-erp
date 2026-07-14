@@ -92,7 +92,7 @@ escenario Base) que el motor Python — es la brecha esperada entre los dos
 modelos paralelos (ver más abajo), que se hizo algo más visible al quitar
 el crecimiento de los dos.
 
-## El libro Excel (seed original de 23 hojas + `RRHH`/`APU_Ingenieria`/`Dashboard` agregadas por el ERP; `Personal`/`Empleados`/`OEE_TEEP` ya no existen, consolidadas 2026-07 — ver decisión #17 de CLAUDE.md)
+## El libro Excel (seed original de 23 hojas + `RRHH`/`APU_Ingenieria`/`Dashboard` agregadas por el ERP; `Personal`/`Empleados`/`OEE_TEEP` ya no existen, consolidadas 2026-07 — ver decisión #17 de AGENTS.md)
 
 Orden y responsables:
 
@@ -158,7 +158,7 @@ también funcionan directo, por si el libro cambia a futuro):
 | `precio_p1_330ml`/`precio_p2_pet15`/`precio_p3_garrafon` | `precio_venta_cop_<SKU>` |
 
 `crecimiento_demanda` (fila `Parametros!B10`) **ya NO se lee** (decisión #20
-de CLAUDE.md, 2026-07): el motor eliminó por completo el parámetro
+de AGENTS.md, 2026-07): el motor eliminó por completo el parámetro
 `CRECIMIENTO_DEMANDA_ANUAL` — la evaluación financiera sigue siempre la
 demanda que manda el ERP (pronóstico/escenario), sin inflarla con una tasa
 de crecimiento aparte. La fila de Sheets se conserva en 0% con una nota
@@ -234,7 +234,8 @@ Amarillo = palanca clave. Fuente Arial. Formato moneda `$#,##0;($#,##0);-`.
   usaba flujo agregado, este deriva de la demanda real v4 con D&A e impuestos
   explícitos. No "corregirlo" hacia el valor viejo.
 - **Maestro operativo único en Sheets.** `Maestro_Productos` contiene EAN,
-  línea, empaque, datos físicos, precio base y costo material por SKU. Lo
-  consumen pronóstico y `core/finanzas_negocio._maestro()`; Odoo conserva una
-  copia sincronizada para operaciones. `data/maestro_productos.csv` es solo
-  semilla/fallback cuando `EXTERNAL_ONLY` está apagado, no una fuente viva.
+  empaque, atributos físicos y precio/costo base. Lo consumen
+  `core.forecast.cargar_maestro()` y `core.finanzas_negocio._maestro()` en
+  operación. `data/maestro_productos.csv` solo es seed/fallback cuando
+  `EXTERNAL_ONLY=false`; no lo uses como fuente viva. BOM/proveedores/stock y
+  transacciones siguen gobernados por Odoo.

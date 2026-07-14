@@ -230,6 +230,21 @@ def plotly_layout(fig, titulo: str = ""):
 # ------------------------------------------------------------------ datos compartidos
 @st.cache_data(show_spinner="Ajustando modelos sobre los datos reales KOF y corriendo Monte Carlo...")
 def datos_pronostico(mc_n: int = 10000):
+    from config import settings
+    if settings.EXTERNAL_ONLY:
+        from integrations.sheets_client import Contabilidad
+        cli = Contabilidad()
+        mensual = cli.leer_dataset_pronostico("Forecast_Pronostico_Mensual")
+        trimestral = cli.leer_dataset_pronostico("Forecast_Pronostico_Trimestral")
+        metricas = cli.leer_dataset_pronostico("Forecast_Metricas")
+        from core.forecast import cargar_historico_mensual, serie_trimestral_litros
+        hist_m = cargar_historico_mensual()
+        hist_q = serie_trimestral_litros().reset_index()
+        return {"mensual": mensual, "trimestral": trimestral,
+                "metricas": metricas,
+                "supuestos": cli.leer_config_pronostico("resultado_supuestos"),
+                "historico_mensual": hist_m, "historico_trimestral": hist_q,
+                "validacion": cli.leer_config_pronostico("resultado_validacion")}
     from core.forecast import pronostico_base
     from integrations import state_store
     r = pronostico_base(mc_n=mc_n)
@@ -265,6 +280,19 @@ def resultado_base():
 
 def demanda_activa():
     """(nombre_escenario, df_mensual) segun el escenario activo en sesion."""
+    from config import settings
+    if settings.EXTERNAL_ONLY:
+        import pandas as pd
+        from integrations.sheets_client import Contabilidad
+        esc = st.session_state.get("escenario_activo")
+        nombre = esc.nombre if esc is not None else "Base"
+        df = Contabilidad().leer_demanda(escenario=nombre != "Base")
+        for c in df.columns:
+            if str(c).endswith("_unidades") or c == "mes_num":
+                df[c] = pd.to_numeric(df[c], errors="raise")
+        if df.empty:
+            raise RuntimeError(f"La hoja de demanda externa para {nombre} esta vacia")
+        return nombre, df
     from core.escenarios import aplicar_escenario
     base = datos_pronostico()
     esc = st.session_state.get("escenario_activo")

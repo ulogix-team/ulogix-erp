@@ -8,7 +8,6 @@ import streamlit as st
 
 from app.ui import theme
 from config import settings
-from core.forecast import cargar_maestro
 from integrations import state_store
 from integrations.odoo_client import LineaPedido, OdooClient
 
@@ -18,8 +17,8 @@ theme.encabezado("ODOO · VENTAS Y CUENTAS POR COBRAR",
                  "Cierra el flujo del ERP que faltaba: compra-insumo -> "
                  "fabricacion -> **venta -> factura -> cobro**. Cada lote de "
                  "producto terminado (orden de fabricacion ya validada en "
-                 "Odoo) se reparte entre los clientes de `data/clientes.csv` "
-                 "segun su participacion, y por cada uno se crea una "
+                 "Odoo) se reparte entre los clientes activos de **Odoo**, "
+                 "y por cada uno se crea una "
                  "`sale.order` que se confirma, se entrega (descuenta el "
                  "terminado del inventario) y se factura (cuenta por cobrar).")
 theme.banner_escenario()
@@ -29,41 +28,51 @@ estado = "🟢 conectado a " + settings.ODOO_URL if not odoo.dry_run else \
          "🟡 dry-run (sin credenciales en .env — las ventas se auditan en SQLite)"
 st.caption(f"Estado Odoo: {estado}")
 
-maestro = cargar_maestro().set_index("sku")
-clientes = pd.read_csv(settings.DATA_DIR / "clientes.csv")
+try:
+    clientes_odoo = odoo.listar_clientes() if not odoo.dry_run else []
+except Exception as exc:  # noqa: BLE001
+    clientes_odoo = []
+    st.error(f"No se pudieron leer los clientes de Odoo: {exc}")
+clientes = pd.DataFrame(clientes_odoo)
+if not clientes.empty:
+    clientes = clientes[["id", "name", "email", "phone", "x_ulogix_participacion"]] \
+        .rename(columns={"name": "nombre", "x_ulogix_participacion": "participacion"})
 
 # ------------------------------------------------------------------ lotes vendibles
 st.subheader("1 · 📦 Lotes de producto terminado disponibles")
 
-pos = state_store.listar_pos()
-ventas = state_store.listar_ventas()
-mo_vendidas = {v["mo_name"] for v in ventas if v.get("mo_name")}
-
-lotes: dict[str, dict] = {}
-for p in pos:
-    if p["estado"] != "recibida_odoo" or not p.get("mo_name"):
-        continue
-    lotes.setdefault(p["mo_name"], p)  # una fila por MO: una MO por producto+mes
-disponibles = [p for mo, p in lotes.items() if mo not in mo_vendidas]
+try:
+    lotes_odoo = odoo.listar_lotes_fabricados() if not odoo.dry_run else []
+except Exception as exc:  # noqa: BLE001
+    lotes_odoo = []
+    st.error(f"No se pudieron leer los lotes fabricados de Odoo: {exc}")
+disponibles = [p for p in lotes_odoo if p["cantidad_disponible"] > 1e-9]
 
 if not disponibles:
     st.info("Aun no hay lotes de producto terminado listos para vender (o ya "
             "se vendieron todos). Completa el ciclo compra -> fabricacion en "
             "las paginas *Ordenes Odoo* y *Produccion MQTT* primero: un lote "
             "queda disponible aqui cuando su orden de fabricacion (MO) "
-            "vinculada quedo `recibida_odoo`.")
+            "vinculada quedó `done` y conserva cantidad no comprometida en "
+            "órdenes de venta no canceladas de Odoo.")
 else:
-    df_lotes = pd.DataFrame([{
-        "mo_name": p["mo_name"], "producto": p["sku"],
-        "cantidad_disponible": p["qty_objetivo"], "lote": p.get("detalle", "")
-    } for p in disponibles])
+    df_lotes = pd.DataFrame(disponibles)
     st.dataframe(df_lotes, width="stretch", hide_index=True)
 
     sel_mo = st.multiselect("Lotes a vender", df_lotes["mo_name"].tolist(),
                             default=df_lotes["mo_name"].tolist())
-    st.caption("La cantidad de cada lote se reparte entre estos clientes "
-               "segun `participacion` (suma 1.0 en `data/clientes.csv`):")
-    st.dataframe(clientes, width="stretch", hide_index=True)
+    st.caption("Clientes leídos de `res.partner` en Odoo. Ajusta la participación "
+               "para esta corrida; se normaliza automáticamente a 100 % y no se "
+               "guarda en archivos locales.")
+    if clientes.empty:
+        st.warning("Odoo no tiene clientes activos (`customer_rank > 0`).")
+        clientes_ed = clientes
+    else:
+        clientes_ed = st.data_editor(
+            clientes, width="stretch", hide_index=True,
+            disabled=["id", "nombre", "email", "phone"],
+            column_config={"participacion": st.column_config.NumberColumn(
+                "Participación", min_value=0.0, max_value=1.0, format="%.2f")})
 
     avanzar = st.toggle("Confirmar + entregar + facturar de inmediato",
                         value=True,
@@ -75,21 +84,27 @@ else:
                              "gestionar a mano desde Odoo.")
 
     if st.button("🧾 Crear ordenes de venta en Odoo", type="primary",
-                 disabled=not sel_mo):
+                 disabled=not sel_mo or clientes.empty):
         creadas: list[str] = []
         avisos: list[str] = []
         seleccion = [p for p in disponibles if p["mo_name"] in sel_mo]
-        total_pasos = max(len(seleccion) * len(clientes), 1)
+        clientes_venta = clientes_ed[clientes_ed["participacion"] > 0].copy()
+        suma_part = float(clientes_venta["participacion"].sum())
+        if suma_part <= 0:
+            st.error("La participación total debe ser mayor que cero.")
+            st.stop()
+        clientes_venta["participacion"] /= suma_part
+        total_pasos = max(len(seleccion) * len(clientes_venta), 1)
         barra = st.progress(0.0)
         paso = 0
         for p in seleccion:
             sku = p["sku"]
-            precio = float(maestro.loc[sku, "precio_venta_cop"]) if sku in maestro.index else 0.0
-            nombre_prod = maestro.loc[sku, "nombre"] if sku in maestro.index else sku
-            for c in clientes.itertuples():
+            precio = float(p["precio_venta_cop"])
+            nombre_prod = p["producto"]
+            for c in clientes_venta.itertuples():
                 paso += 1
                 barra.progress(paso / total_pasos)
-                cantidad = round(p["qty_objetivo"] * c.participacion, 2)
+                cantidad = round(p["cantidad_disponible"] * c.participacion, 2)
                 if cantidad <= 0:
                     continue
                 referencia = f"ULOGIX-VTA/{p['mo_name']}/{c.nombre[:16]}"
@@ -98,18 +113,7 @@ else:
                 res = odoo.crear_orden_venta(c.nombre, lineas, referencia,
                                              confirmar=avanzar, entregar=avanzar,
                                              facturar=avanzar)
-                estado_venta = ("facturada" if res.get("facturada") else
-                                "entregada" if res.get("entregada") else
-                                "confirmada" if avanzar else "creada")
-                state_store.registrar_venta(so_name=res["name"], sku=sku,
-                                            cliente=c.nombre, cantidad=cantidad,
-                                            precio_unitario_cop=precio,
-                                            mo_name=p["mo_name"], odoo_id=res.get("id"),
-                                            estado=estado_venta, detalle=referencia)
                 creadas.append(f"{res['name']} → {c.nombre} ({cantidad:,.0f} un)")
-                if res.get("entregada"):  # salio de bodega -> sale del stock local
-                    state_store.ajustar_stock("producto", sku, -cantidad, "venta_entrega",
-                                              referencia=res["name"])
                 if avanzar and not res.get("entregada"):
                     avisos.append(f"⚠️ {res['name']}: la entrega no se pudo validar "
                                   "(ver log_acciones para el detalle).")
@@ -126,20 +130,19 @@ st.divider()
 
 # ------------------------------------------------------------------ seguimiento
 st.subheader("2 · 💰 Seguimiento de ventas")
-ventas = state_store.listar_ventas()
-if not ventas:
-    st.info("Aun no hay ventas registradas. Crea ordenes de venta arriba.")
+try:
+    ventas_odoo = odoo.listar_ordenes_venta(200) if not odoo.dry_run else []
+except Exception as exc:  # noqa: BLE001
+    ventas_odoo = []
+    st.error(f"No se pudieron leer las ventas de Odoo: {exc}")
+if not ventas_odoo:
+    st.info("Odoo aún no tiene órdenes de venta.")
 else:
-    iconos = {"creada": "⚪", "confirmada": "🔵", "entregada": "🟠",
-             "facturada": "🟢", "error": "🔴"}
-    df_v = pd.DataFrame(ventas)
-    st.dataframe(
-        df_v[["so_name", "cliente", "sku", "cantidad", "subtotal_cop", "estado",
-              "mo_name", "actualizado_ts"]],
-        width="stretch", hide_index=True,
-        column_config={"subtotal_cop": st.column_config.NumberColumn(format="$%,.0f"),
-                       "estado": st.column_config.TextColumn()})
-    st.caption(" · ".join(f"{iconos.get(k,'⚪')} {k}" for k in iconos))
+    st.dataframe(pd.DataFrame(ventas_odoo), width="stretch", hide_index=True,
+                 column_config={"amount_total": st.column_config.NumberColumn(format="$%,.0f")})
+
+with st.expander("Caché técnico de correlación (SQLite, solo diagnóstico)"):
+    st.dataframe(pd.DataFrame(state_store.listar_ventas()), width="stretch", hide_index=True)
 
 with st.expander("Ordenes y facturas en Odoo (lectura directa de la API)"):
     c1, c2, c3 = st.columns(3)

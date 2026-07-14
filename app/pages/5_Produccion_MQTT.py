@@ -12,6 +12,8 @@ from app.ui import theme
 from app.ui.theme import COLOR_SKU, NOMBRE_CORTO
 from config import settings
 from integrations import state_store
+from integrations.odoo_client import OdooClient
+from integrations.sheets_client import Contabilidad
 
 theme.preparar_pagina("Produccion MQTT", "📡")
 theme.encabezado("MIDDLEWARE · UNS FEMSA (MQTT)",
@@ -23,47 +25,59 @@ theme.encabezado("MIDDLEWARE · UNS FEMSA (MQTT)",
                  f"`{settings.OPCUA_ENDPOINT}` (puente via Node-RED).")
 
 st.caption("El middleware corre como proceso aparte: `python middleware/run_middleware.py` "
-           "(o el servicio `middleware` de docker-compose). Esta pagina lee su estado "
-           "desde SQLite y se refresca sola.")
+           "(o el servicio `middleware` de docker-compose). Esta pagina consulta "
+           "**Sheets** para el histórico de producción, **Odoo** para las órdenes de "
+           "fabricación y la tabla local `kpi_uns` para los KPIs vivos recibidos "
+           "directamente del broker MQTT.")
+
+
+def _columna(df: pd.DataFrame, *nombres: str) -> str | None:
+    mapa = {str(c).strip().lower(): c for c in df.columns}
+    return next((mapa[n.lower()] for n in nombres if n.lower() in mapa), None)
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def _fuentes_externas():
+    cont = Contabilidad()
+    libro = cont.leer_libro_produccion()
+    mos = OdooClient().listar_ordenes_fabricacion(100)
+    return libro, mos
 
 
 def _vista():
-    acum = state_store.produccion_acumulada()
+    try:
+        libro, mos = _fuentes_externas()
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"No fue posible consultar Sheets/Odoo: {exc}")
+        return
+    sku_col = _columna(libro, "sku")
+    qty_col = _columna(libro, "qty", "cantidad", "unidades")
+    ts_col = _columna(libro, "ts", "timestamp", "fecha")
     with st.container(border=True):
         cols = st.columns(3)
-        mapa = {a["sku"]: a for a in acum}
         for col, sku in zip(cols, COLOR_SKU):
-            a = mapa.get(sku)
             with col:
-                if a:
-                    st.metric(NOMBRE_CORTO[sku], f"{a['qty_total']:,.0f} un",
-                              f"{a['eventos']} reportes · ultimo {a['ultimo'][11:19]} UTC",
-                              delta_color="off")
+                if sku_col and qty_col and not libro.empty:
+                    d = libro[libro[sku_col].astype(str) == sku].copy()
+                    total = pd.to_numeric(d[qty_col], errors="coerce").fillna(0).sum()
+                    ultimo = str(d[ts_col].iloc[-1]) if ts_col and not d.empty else "sin fecha"
+                    st.metric(NOMBRE_CORTO[sku], f"{total:,.0f} un",
+                              f"{len(d)} reportes · ultimo {ultimo}", delta_color="off")
                 else:
                     st.metric(NOMBRE_CORTO[sku], "—", "sin reportes aun", delta_color="off")
 
-    st.subheader("✅ Cumplimiento de ordenes de compra")
-    pos = state_store.listar_pos(30)
-    if not pos:
-        st.info("No hay POs vinculadas todavia (crealas en *Ordenes Odoo*).")
+    st.subheader("✅ Ordenes de fabricacion en Odoo")
+    if not mos:
+        st.info("Odoo no reporta ordenes de fabricacion.")
     else:
-        iconos = {"abierta": "🔵", "cumplida": "🟠", "recibida_odoo": "🟢", "error": "🔴"}
         with st.container(border=True):
-            for p in pos:
-                avance = min(1.0, p["qty_producida"] / max(p["qty_objetivo"], 1e-9))
-                st.progress(avance, text=f"{iconos.get(p['estado'],'⚪')} {p['po_name']} · "
-                                         f"{p['sku']} · {p['qty_producida']:,.0f}/"
-                                         f"{p['qty_objetivo']:,.0f} un · `{p['estado']}` · "
-                                         f"MO `{p.get('mo_name') or '—'}`")
+            st.dataframe(pd.DataFrame(mos), width="stretch", hide_index=True)
 
-    st.subheader("🕒 Ultimos reportes de produccion")
-    ev = state_store.ultimos_eventos(25)
-    if ev:
-        st.dataframe(pd.DataFrame(ev)[["ts", "linea", "sku", "qty", "topic"]],
-                     width="stretch", hide_index=True)
+    st.subheader("🕒 Ultimos reportes de produccion (Sheets)")
+    if not libro.empty:
+        st.dataframe(libro.tail(25), width="stretch", hide_index=True)
     else:
-        st.caption("Sin eventos aun. Publica en "
-                   f"`{settings.MQTT_TOPIC_BASE}/L1/production` o usa el boton de prueba.")
+        st.caption("La hoja `LibroProduccion` aun no contiene reportes.")
 
 
 try:  # refresco automatico (Streamlit >= 1.37)
@@ -165,10 +179,15 @@ Mapeo de lineas: `Linea1↔L1 (350 ml)`, `Linea2↔L2 (1.5 L)`, `Linea3↔L3 (ga
 """)
 
 st.subheader("📊 KPIs MES recibidos del UNS")
-kpis = state_store.kpis_actuales()
-if kpis:
-    _piv = (pd.DataFrame(kpis)
-            .pivot_table(index="linea", columns="kpi", values="valor_num",
+st.caption("Fuente viva: `MQTT → interpretar_topico() → kpi_uns`. La hoja "
+           "`KPIs_UNS` es el histórico/auditoría, no el origen del tablero.")
+kpis_df = pd.DataFrame(state_store.kpis_actuales())
+if not kpis_df.empty:
+    linea_col = _columna(kpis_df, "linea")
+    kpi_col = _columna(kpis_df, "kpi")
+    valor_col = _columna(kpis_df, "valor_num", "valor")
+    _piv = (kpis_df.assign(**{valor_col: pd.to_numeric(kpis_df[valor_col], errors="coerce")})
+            .pivot_table(index=linea_col, columns=kpi_col, values=valor_col,
                          aggfunc="last").round(4))
     _orden = [c for c in ["OEE", "Availability", "Performance", "Quality",
                           "TEEP", "DT", "MTTR", "MTBF", "MLT"] if c in _piv.columns]
@@ -178,9 +197,5 @@ if kpis:
         st.caption("`PLANTA` = agregado de toda la planta (broker real), no de "
                    "una linea especifica.")
 else:
-    st.caption("Sin KPIs aun — publica a `FEMSA/LineaX/MES/KPI/...` o corre el "
-               "simulador.")
-
-with st.expander("Auditoria del middleware (log)"):
-    st.dataframe(pd.DataFrame(state_store.ultimo_log(60)), width="stretch",
-                 hide_index=True)
+    st.caption("La tabla `kpi_uns` aún no contiene KPIs; verifica que el middleware "
+               "esté suscrito al broker.")

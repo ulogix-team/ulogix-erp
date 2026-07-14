@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 import sys
 import warnings
@@ -66,40 +67,184 @@ PROD_DE_SKU = {v: k for k, v in SKU_DE.items()}
 HORIZONTE_Q = [(2026, 2), (2026, 3), (2026, 4), (2027, 1)]  # Abr-26 -> Mar-27
 
 
+def normalizar_demanda_mensual(df: pd.DataFrame) -> pd.DataFrame:
+    """Restablece el contrato temporal de una demanda mensual externa.
+
+    Google Sheets interpreta etiquetas como ``Abr-26`` como fechas y, al
+    leerlas con ``UNFORMATTED_VALUE``, devuelve seriales (por ejemplo 46138).
+    Las hojas fijas ``Demanda``/``DemandaEscenario`` tampoco almacenan
+    ``ano`` ni ``mes``. Esta funcion reconstruye ambas columnas y deja una
+    etiqueta canonica ``Mes-AA`` sin alterar ``mes_num`` (que en esas hojas
+    es el indice 1..12 usado por las formulas financieras).
+    """
+    out = df.copy()
+    if out.empty:
+        return out
+
+    fechas = pd.Series(pd.NaT, index=out.index, dtype="datetime64[ns]")
+    mapa_mes = {m.lower(): i for i, m in enumerate(MESES, 1)}
+    mapa_mes.update({
+        "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
+        "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+        "septiembre": 9, "setiembre": 9, "octubre": 10,
+        "noviembre": 11, "diciembre": 12,
+    })
+
+    # 1) El pronostico completo trae ano/mes explicitos: son la autoridad.
+    # Sheets puede convertir "Ene-27" en 27-ene-2026, por lo que el serial de
+    # etiqueta NO debe sobreescribir estos campos correctos.
+    if {"ano", "mes"}.issubset(out.columns):
+        for idx in out.index:
+            try:
+                mes_num = mapa_mes[str(out.at[idx, "mes"]).strip().lower()]
+                fechas.loc[idx] = pd.Timestamp(int(out.at[idx, "ano"]), mes_num, 1)
+            except (KeyError, TypeError, ValueError):
+                continue
+
+    # 2) Demanda/DemandaEscenario no guardan ano/mes, pero mes_num es el
+    # ordinal 1..12 del horizonte fijo Abr-26 -> Mar-27.
+    if "mes_num" in out:
+        ordinales = pd.to_numeric(out["mes_num"], errors="coerce")
+        inicio = pd.Period(settings.HORIZONTE_INICIO, freq="M")
+        for idx in fechas[fechas.isna()].index:
+            ordinal = ordinales.loc[idx]
+            if pd.notna(ordinal) and ordinal >= 1:
+                fechas.loc[idx] = (inicio + int(ordinal) - 1).to_timestamp()
+
+    # 3) La etiqueta queda como ultimo recurso para tablas historicas o
+    # contratos antiguos que no tengan ninguno de los campos anteriores.
+    if "etiqueta" in out:
+        etiquetas = out["etiqueta"]
+        pendientes = fechas.isna()
+        seriales = pd.to_numeric(etiquetas, errors="coerce")
+        validos = pendientes & seriales.notna()
+        if validos.any():
+            fechas.loc[validos] = pd.to_datetime(
+                seriales.loc[validos], unit="D", origin="1899-12-30",
+                errors="coerce")
+        for idx in fechas[fechas.isna()].index:
+            texto = str(etiquetas.loc[idx]).strip()
+            partes = texto.replace("/", "-").split("-")
+            if len(partes) == 2 and partes[0].lower() in mapa_mes:
+                try:
+                    ano = int(partes[1])
+                    ano += 2000 if ano < 100 else 0
+                    fechas.loc[idx] = pd.Timestamp(ano, mapa_mes[partes[0].lower()], 1)
+                    continue
+                except (TypeError, ValueError):
+                    pass
+            fechas.loc[idx] = pd.to_datetime(texto, errors="coerce", dayfirst=True)
+
+    if fechas.notna().any():
+        validos = fechas.notna()
+        if "etiqueta" in out:
+            out["etiqueta"] = out["etiqueta"].astype(object)
+        out.loc[validos, "ano"] = fechas.loc[validos].dt.year.astype(int)
+        out.loc[validos, "mes"] = fechas.loc[validos].dt.month.map(
+            lambda numero: MESES[int(numero) - 1])
+        out.loc[validos, "etiqueta"] = fechas.loc[validos].map(
+            lambda fecha: f"{MESES[fecha.month - 1]}-{str(fecha.year)[2:]}")
+        out["ano"] = pd.to_numeric(out["ano"], errors="coerce").astype("Int64")
+
+    for columna in out.columns:
+        if (str(columna).endswith(("_unidades", "_litros", "_p05", "_p95"))
+                or columna == "mes_num"):
+            out[columna] = pd.to_numeric(out[columna], errors="raise")
+    return out
+
+
 # ----------------------------------------------------------------- carga
 def _dd() -> Path:
     return settings.DATA_DIR
 
 
+@lru_cache(maxsize=1)
+def _contabilidad():
+    from integrations.sheets_client import Contabilidad
+    return Contabilidad()
+
+
+@lru_cache(maxsize=1)
 def cargar_parametros_repo() -> dict:
-    par = json.load(open(_dd() / "parametros.json", encoding="utf-8"))
+    par = (_contabilidad().leer_config_pronostico("parametros_repo")
+           if settings.EXTERNAL_ONLY else
+           json.load(open(_dd() / "parametros.json", encoding="utf-8")))
     par["W"] = {int(k): v for k, v in par["W"].items()}
     return par
 
 
+@lru_cache(maxsize=1)
 def cargar_parametros() -> dict:  # parametros de planta (OEE, lineas, negocio)
+    if settings.EXTERNAL_ONLY:
+        return _contabilidad().leer_config_pronostico("parametros_planta")
     return json.load(open(_dd() / "parametros_planta.json", encoding="utf-8"))
 
 
+@lru_cache(maxsize=1)
 def cargar_maestro() -> pd.DataFrame:
+    if settings.EXTERNAL_ONLY:
+        return _contabilidad().leer_maestro_productos()
     return pd.read_csv(_dd() / "maestro_productos.csv")
 
 
+@lru_cache(maxsize=1)
 def cargar_historico_mensual() -> pd.DataFrame:
-    df = pd.read_csv(_dd() / "historico_planta.csv", parse_dates=["fecha"])
+    df = (_contabilidad().leer_dataset_pronostico("Forecast_Historico_Mensual")
+          if settings.EXTERNAL_ONLY else
+          pd.read_csv(_dd() / "historico_planta.csv"))
+    serial = pd.to_numeric(df["fecha"], errors="coerce")
+    if serial.notna().all():
+        df["fecha"] = pd.to_datetime(serial, unit="D", origin="1899-12-30")
+    else:
+        df["fecha"] = pd.to_datetime(df["fecha"])
     return df.sort_values(["producto", "fecha"]).reset_index(drop=True)
 
 
+@lru_cache(maxsize=1)
 def serie_trimestral_litros() -> pd.DataFrame:
-    dq = pd.read_csv(_dd() / "historico_trimestral_planta.csv")
+    dq = (_contabilidad().leer_dataset_pronostico("Forecast_Historico_Trimestral")
+          if settings.EXTERNAL_ONLY else
+          pd.read_csv(_dd() / "historico_trimestral_planta.csv"))
+    for c in ["anio", "trim", "litros"]:
+        dq[c] = pd.to_numeric(dq[c], errors="raise")
     dq["t"] = pd.PeriodIndex([f"{y}Q{q}" for y, q in zip(dq.anio, dq.trim)],
                              freq="Q").to_timestamp()
     return dq.pivot_table(index="t", columns="producto", values="litros").asfreq("QS")
 
 
+@lru_cache(maxsize=1)
 def cargar_perfil_formato() -> dict[str, list[float]]:
-    df = pd.read_csv(_dd() / "perfil_formato.csv")
+    df = (_contabilidad().leer_dataset_pronostico("Forecast_Perfil_Formato")
+          if settings.EXTERNAL_ONLY else
+          pd.read_csv(_dd() / "perfil_formato.csv"))
+    for c in PROD:
+        df[c] = pd.to_numeric(df[c], errors="raise")
     return {p: df[p].tolist() for p in PROD}  # indice 0 = enero
+
+
+@lru_cache(maxsize=1)
+def cargar_kof() -> dict:
+    if settings.EXTERNAL_ONLY:
+        df = _contabilidad().leer_dataset_pronostico("Forecast_KOF_Trimestral")
+        return {str(r["k"]): {c: r[c] for c in df.columns if c != "k"}
+                for _, r in df.iterrows()}
+    return json.load(open(_dd() / "kof_trimestral_colombia.json"))
+
+
+@lru_cache(maxsize=1)
+def cargar_distribuciones() -> dict:
+    if settings.EXTERNAL_ONLY:
+        return _contabilidad().leer_config_pronostico("distribuciones")
+    return json.load(open(_dd() / "distribuciones.json"))
+
+
+def limpiar_cache_fuentes() -> None:
+    """Una lectura por fuente y corrida; evita agotar la cuota de Sheets."""
+    for funcion in (_contabilidad, cargar_parametros_repo, cargar_parametros,
+                    cargar_maestro, cargar_historico_mensual,
+                    serie_trimestral_litros, cargar_perfil_formato,
+                    cargar_kof, cargar_distribuciones):
+        funcion.cache_clear()
 
 
 # ----------------------------------------------------------------- modelos
@@ -116,7 +261,7 @@ def _modelo_ligado_agua(hasta=None, horizonte: int = 4):
     escalado a litros de planta. Devuelve (forecast, fitted, params)."""
     from statsmodels.tsa.holtwinters import (ExponentialSmoothing,
                                              SimpleExpSmoothing)
-    kof = json.load(open(_dd() / "kof_trimestral_colombia.json"))
+    kof = cargar_kof()
     par = cargar_parametros_repo()
     esc = par["SHARE"]["P3"] * par["L_CU"] * 1e6
     df = pd.DataFrame([dict(k=k, **v) for k, v in sorted(kof.items())])
@@ -176,11 +321,12 @@ class ResultadoPronostico:
 
 
 def pronostico_base(mc_n: int | None = None, semilla: int | None = None) -> ResultadoPronostico:
+    limpiar_cache_fuentes()
     mc_n = mc_n or settings.MC_N
     rng = np.random.default_rng(settings.SEMILLA if semilla is None else semilla)
     par = cargar_parametros_repo()
     planta = cargar_parametros()
-    dist = json.load(open(_dd() / "distribuciones.json"))
+    dist = cargar_distribuciones()
     piv = serie_trimestral_litros()
     W = par["W"]
     perfil = cargar_perfil_formato()

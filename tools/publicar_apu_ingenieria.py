@@ -10,8 +10,8 @@ tistas/OEM + materiales + logistica) x (1 + AIU). AIU = Administracion +
 Imprevistos + Utilidad, con una banda de mercado de referencia del 25-30%
 (NO es una tarifa fijada por ley: desde la desregulacion de honorarios
 profesionales en Colombia, COPNIA no fija tarifas minimas — es de negocia-
-cion contractual). La mano de obra propia usa el costo real de nomina de
-`data/empleados.csv` (equipo de implementacion, RRHH); los rubros de
+cion contractual). La mano de obra propia usa una formula viva contra la
+seccion RESUMEN de `RRHH` en Sheets (equipo de implementacion); los rubros de
 terceros/OEM (FAT/SAT, cuadrillas de instalacion) son supuestos de mercado
 documentados linea por linea, a validar con cotizacion real antes de
 contratar — no son cifras oficiales de KRONES/HEUFT ni de un subcontratista.
@@ -34,15 +34,14 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from integrations.sheets_client import Contabilidad
 
-# costo empleador RRHH (data/empleados.csv, rol "Equipo diseno y desarrollo
-# ULogix") / 160h-mes -- ancla la mano de obra propia a un dato real, no a
-# un supuesto de mercado
+# Semilla usada solo para calibrar el AIU que hace coincidir el APU inicial con
+# CAPEX. La tarifa publicada es una formula viva RRHH!G/160; Sheets gobierna.
 COSTO_HORA_ULOGIX = 12_451_680 / 160
 PCT_ADMIN, PCT_IMPREV, PCT_UTIL = 0.15, 0.05, 0.072  # referencia AIU ~25-30%
 
 
 def _aiu_pct(costo_directo: float, precio_total: float) -> float:
-    return round(precio_total / costo_directo - 1, 4)
+    return precio_total / costo_directo - 1
 
 
 def _items() -> list[tuple[str, list[tuple], float]]:
@@ -51,7 +50,7 @@ def _items() -> list[tuple[str, list[tuple], float]]:
          "filosofia de control)", 1360, "horas", round(COSTO_HORA_ULOGIX),
          "Mano de obra propia",
          "Ing. automatizacion 480h + Ing. MES/UNS 400h + Ing. procesos 320h + "
-         "Lider de proyecto 160h (data/empleados.csv, tarifa = costo empleador / 160h-mes)"),
+         "Lider de proyecto 160h (RRHH en Sheets, tarifa = costo empleador / 160h-mes)"),
         ("FAT (Factory Acceptance Test) — honorarios OEM (KRONES, HEUFT)", 1, "global",
          577_500_000, "Subcontratado / terceros",
          "Referencia de mercado: ~5% del valor de los equipos sujetos a prueba de fabrica "
@@ -114,8 +113,8 @@ def filas_hoja() -> list[list]:
          "Utilidad, referencia estandar de la industria de construccion/EPC en Colombia "
          "(banda de mercado 25-30%; NO es una tarifa fijada por ley — desde la "
          "desregulacion de honorarios profesionales, COPNIA no fija tarifas minimas, "
-         "es de negociacion contractual). La mano de obra propia usa el costo real de "
-         "nomina de data/empleados.csv (RRHH); los rubros de terceros/OEM son supuestos "
+         "es de negociacion contractual). La mano de obra propia usa una formula viva "
+         "contra RRHH en Sheets; los rubros de terceros/OEM son supuestos "
          "de mercado documentados, a validar con cotizacion real antes de contratar.",
          "", "", "", "", "", "", ""],
         ["", "", "", "", "", "", "", ""],
@@ -127,26 +126,46 @@ def filas_hoja() -> list[list]:
         ["item", "componente", "descripcion", "cantidad", "unidad",
          "valor_unitario_cop", "subtotal_cop", "tipo_costo"]]
 
+    fila_resumen = 6
+    fila_detalle = 12
+
     for nombre, filas_item, precio_total in _items():
         costo_directo = sum(r[1] * r[3] for r in filas_item)
         aiu_total_pct = _aiu_pct(costo_directo, precio_total)
         aiu_cop = precio_total - costo_directo
         base = PCT_ADMIN + PCT_IMPREV + PCT_UTIL
-        pa = round(aiu_total_pct * PCT_ADMIN / base, 4)
-        pi = round(aiu_total_pct * PCT_IMPREV / base, 4)
-        pu = round(aiu_total_pct - pa - pi, 4)
-        resumen_rows.append([nombre, costo_directo, pa, pi, pu, aiu_total_pct, aiu_cop,
-                             precio_total])
+        pa = aiu_total_pct * PCT_ADMIN / base
+        pi = aiu_total_pct * PCT_IMPREV / base
+        pu = aiu_total_pct - pa - pi
+        resumen_rows.append([
+            nombre,
+            f'=SUMIF($A$12:$A$200;A{fila_resumen};$G$12:$G$200)',
+            pa, pi, pu,
+            f'=SUM(C{fila_resumen}:E{fila_resumen})',
+            f'=B{fila_resumen}*F{fila_resumen}',
+            f'=B{fila_resumen}+G{fila_resumen}',
+        ])
         for comp, cant, uni, vu, tipo, nota in filas_item:
-            detalle_rows.append([nombre, comp, nota or comp, cant, uni, vu, cant * vu, tipo])
-        detalle_rows.append(["", "", f"Costo Directo — {nombre}", "", "", "", costo_directo,
-                             "Subtotal"])
+            tarifa = vu
+            if comp.startswith("Mano de obra propia ULogix"):
+                tarifa = ('=INDEX(RRHH!$G:$G;MATCH("Equipo diseno y desarrollo ULogix";'
+                          'RRHH!$A:$A;0))/160')
+            detalle_rows.append([nombre, comp, nota or comp, cant, uni, tarifa,
+                                 f'=D{fila_detalle}*F{fila_detalle}', tipo])
+            fila_detalle += 1
+        detalle_rows.append(["", "", f"Costo Directo — {nombre}", "", "", "",
+                             f'=B{fila_resumen}', "Subtotal"])
+        fila_detalle += 1
         detalle_rows.append(["", "", f"AIU {aiu_total_pct*100:.1f}% (Admin {pa*100:.1f}% + "
                                      f"Imprev {pi*100:.1f}% + Util {pu*100:.1f}%)", "", "", "",
-                             aiu_cop, "AIU"])
+                             f'=G{fila_resumen}', "AIU"])
+        fila_detalle += 1
         detalle_rows.append(["", "", f"PRECIO TOTAL — {nombre} (= CAPEX hoja Servicios)",
-                             "", "", "", precio_total, "Total"])
+                             "", "", "", f'=H{fila_resumen}', "Total"])
+        fila_detalle += 1
         detalle_rows.append(["", "", "", "", "", "", "", ""])
+        fila_detalle += 1
+        fila_resumen += 1
 
     filas += resumen_rows
     filas += [["", "", "", "", "", "", "", ""], ["DETALLE", "", "", "", "", "", "", ""]]
@@ -155,17 +174,26 @@ def filas_hoja() -> list[list]:
 
 
 def actualizar_referencia_capex(cont: Contabilidad) -> int:
-    """Anade '(ver hoja APU_Ingenieria)' a la descripcion de las 3 filas de
-    Servicios en CAPEX (columna 'activo / paquete') -- solo texto, no toca
-    cantidad/moneda/costo_unitario/vida/categoria."""
+    """Enlaza el costo unitario de Servicios con el total vivo del APU."""
     ss = cont._spreadsheet()
     ws = ss.worksheet("CAPEX")
     vals = ws.get_all_values()
     objetivo = {n for n, _, _ in _items()}
     actualizadas = 0
     for i, fila in enumerate(vals, start=1):
-        if len(fila) > 2 and fila[2].strip() in objetivo:
-            ws.update_cell(i, 3, f"{fila[2].strip()} (ver hoja APU_Ingenieria)")
+        if len(fila) > 5:
+            nombre = fila[2].replace(" (ver hoja APU_Ingenieria)", "").strip()
+        else:
+            nombre = ""
+        if nombre in objetivo:
+            formula = (f'=INDEX(APU_Ingenieria!$H:$H;MATCH("{nombre}";'
+                       'APU_Ingenieria!$A:$A;0))')
+            ws.update([[f"{nombre} (ver hoja APU_Ingenieria)"]],
+                      f"C{i}", value_input_option="USER_ENTERED")
+            # Cada servicio es un paquete global (cantidad=1). El costo
+            # unitario, no la cantidad, es el que se gobierna desde el APU.
+            ws.update([[1]], f"D{i}", value_input_option="USER_ENTERED")
+            ws.update([[formula]], f"F{i}", value_input_option="USER_ENTERED")
             actualizadas += 1
     return actualizadas
 

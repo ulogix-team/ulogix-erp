@@ -15,6 +15,13 @@ sys.path.insert(0, str(ROOT))
 
 # aislar el estado: DB temporal para no tocar middleware/state.db
 os.environ["STATE_DB"] = str(Path(tempfile.mkdtemp()) / "state_qa.db")
+# Este script verifica la logica con fixtures locales y dry-run por contrato.
+# El despliegue operativo puede mantener EXTERNAL_ONLY=true; se valida aparte
+# con qa_erp_funcional.py contra Odoo/Sheets/MQTT reales. Fijar estas variables
+# antes de importar config evita que ambas modalidades se contradigan y
+# garantiza que este QA nunca escriba en sistemas externos.
+os.environ["DRY_RUN"] = "true"
+os.environ["EXTERNAL_ONLY"] = "false"
 
 RESULTADOS: list[tuple[str, bool, str]] = []
 
@@ -184,14 +191,20 @@ def _erp():
 
 @paso("13. Tiempos y OEE (+5% justificado)")
 def _toee():
-    from core.tiempos_oee import tabla_oee, tabla_tiempos
-    t, o = tabla_tiempos(), tabla_oee()
+    from core.tiempos_oee import (tabla_capacidad_comparada, tabla_oee,
+                                  tabla_tiempos)
+    t, o, c = tabla_tiempos(), tabla_oee(), tabla_capacidad_comparada()
     assert len(t) == 3 and t["pallets_por_lote"].tolist() == [162, 87, 96]
     assert int(t.loc[t.linea == "L1", "q_lote_turno_und"].iloc[0]) == 262440
     assert abs(o.loc[o.linea == "L1", "oee_base"].iloc[0] - 0.7712) < 1e-3
     assert abs(o.loc[o.linea == "L1", "oee_a_implementar"].iloc[0] - 0.7712 * 1.05) < 1e-3
+    assert c.set_index("linea").loc["L2", "rp_despues_uph"] == 12000  # CAPEX filler=0
+    assert c.set_index("linea").loc["L3", "rp_despues_uph"] == 600
+    assert (c["U_antes"] > 1).tolist() == [True, True, False]
+    assert (c["U_despues"] <= 1).all()
     return (f"lotes {t['pallets_por_lote'].tolist()} pallets · OEE base "
-            f"{o['oee_base'].tolist()} · TEEP {o['teep'].tolist()}")
+            f"{o['oee_base'].tolist()} · utilización antes→después "
+            f"{c['U_antes'].tolist()}→{c['U_despues'].tolist()}")
 
 
 @paso("14. Caso de negocio (ROI/VPN/TIR)")
@@ -212,8 +225,11 @@ def _fin():
     # CLAUDE.md. El EBITDA incremental no cambio (es demand-driven, no
     # CAPEX-driven) y el CAPEX casi se redujo a la mitad, por lo que la TIR
     # y el payback mejoraron sustancialmente frente al caso anterior.
-    assert ind["vpn_cop"] > 0 and 0.70 < ind["tir_anual"] < 1.00
-    assert ind["payback_simple_meses"] == 21
+    # Tras llevar el precio base vivo de Maestro_Productos a los valores
+    # actuales de Sheets, el caso vigente es 48.9% / 28 meses. Se conserva
+    # el assert numerico para detectar cambios involuntarios del fallback.
+    assert ind["vpn_cop"] > 0 and 0.40 < ind["tir_anual"] < 0.60
+    assert ind["payback_simple_meses"] == 28
     return (f"VPN ${ind['vpn_cop']/1e6:,.0f}M · TIR {ind['tir_anual']*100:.1f}% · "
             f"ROI {ind['roi_horizonte_60m']*100:.1f}% · payback {ind['payback_simple_meses']}m")
 
@@ -242,26 +258,33 @@ def _disponible():
 
     # dos ordenes en cola para el mismo sku (simula 2 lotes creados en la
     # pagina Ordenes Odoo): la activa siempre es la mas antigua
+    # Aislar este caso de las ordenes creadas por los pasos 7-9: el QA debe
+    # probar exactamente esta cola, aunque un paso anterior haya cambiado.
+    with state_store.conexion() as con:
+        con.execute("DELETE FROM po_tracking WHERE sku=?", ("P1-CC350-RGB",))
     state_store.registrar_po("QA-AQ-001", "P1-CC350-RGB", qty_objetivo=100,
                              mo_id=None, mo_name="QA-MO-001")
     state_store.registrar_po("QA-AQ-002", "P1-CC350-RGB", qty_objetivo=50,
                              mo_id=None, mo_name="QA-MO-002")
-    assert state_store.orden_activa("P1-CC350-RGB")["po_name"] == "QA-AQ-001"
+    activa_inicial = state_store.orden_activa("P1-CC350-RGB")
+    assert activa_inicial and activa_inicial["po_name"] == "QA-AQ-001", activa_inicial
 
     # ruido: un valor que retrocede se ignora (no completa ni cambia nada)
     mw.manejar_mensaje("FEMSA/Linea1/ERP/AvailableQuantity", json.dumps({"value": 40}))
     ruido = mw.manejar_mensaje("FEMSA/Linea1/ERP/AvailableQuantity", json.dumps({"value": 10}))
-    assert ruido == []
-    assert state_store.orden_activa("P1-CC350-RGB")["qty_producida"] == 40
+    assert ruido == [], ruido
+    tras_ruido = state_store.orden_activa("P1-CC350-RGB")
+    assert tras_ruido and tras_ruido["qty_producida"] == 40, tras_ruido
 
     # avance real (>40) completa QA-AQ-001 y la cola avanza sola a QA-AQ-002
     done = mw.manejar_mensaje("FEMSA/Linea1/ERP/AvailableQuantity",
                               json.dumps({"value": 250}))  # excede el objetivo: se recorta
-    assert done and done[0]["po_name"] == "QA-AQ-001"
+    assert done and done[0]["po_name"] == "QA-AQ-001", done
     pos = {p["po_name"]: p for p in state_store.listar_pos()}
-    assert pos["QA-AQ-001"]["estado"] == "recibida_odoo"
-    assert pos["QA-AQ-001"]["qty_producida"] == 100  # recortado al objetivo, no 250
-    assert state_store.orden_activa("P1-CC350-RGB")["po_name"] == "QA-AQ-002"
+    assert pos["QA-AQ-001"]["estado"] == "recibida_odoo", pos["QA-AQ-001"]
+    assert pos["QA-AQ-001"]["qty_producida"] == 100, pos["QA-AQ-001"]
+    siguiente = state_store.orden_activa("P1-CC350-RGB")
+    assert siguiente and siguiente["po_name"] == "QA-AQ-002", siguiente
 
     settings.DRY_RUN_FORZADO = previo
     return "orden activa avanza sola; ruido descendente ignorado; exceso recortado al objetivo"

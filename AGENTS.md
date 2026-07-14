@@ -1,6 +1,6 @@
 # Ulogix Fontibón Suite — contexto del proyecto
 
-> Claude Code lee este archivo automáticamente al iniciar sesión. Contiene todo
+> Codex lee este archivo automáticamente al iniciar sesión. Contiene todo
 > lo que necesitas saber para trabajar en el repo sin re-explicar la
 > arquitectura. **Responde siempre en español.**
 
@@ -93,17 +93,17 @@ nombres de servicio.
    default/fallback: se usan tal cual si Sheets no está configurado, la hoja
    está vacía/con encabezado distinto, o una celda no castea a número — el
    motor da los mismos resultados de siempre en ese caso (`tools/
-   verificacion.py`, paso "Caso de negocio", exige actualmente
-   `payback_simple_meses == 28`, alineado con los precios vivos vigentes).
-   El generador del libro hermano
+   verificacion.py`, paso "Caso de negocio", sigue exigiendo
+   `payback_simple_meses == 21`, actualizado tras el recorte de alcance de
+   la decisión #15). El generador del libro hermano
    (`../femsa-modelo-financiero`) sigue importando esas constantes, pero ahora
    son solo el **seed** con el que se puebla el libro la primera vez, no la
    fuente de verdad en operación — no vuelvas a llamarlo "fuente única" en
    código o docs nuevos. Contrato completo de columnas en
    `docs/INTEGRACION_APIS.md` §1 y en el skill `modelo-financiero-ulogix`.
-   El maestro físico/comercial operativo también vive ahora en la hoja
-   `Maestro_Productos`; el CSV es únicamente semilla/fallback cuando
-   `EXTERNAL_ONLY=false` (ver decisión #24).
+   El maestro físico que usa Odoo/MRP (`data/maestro_productos.csv`) es un
+   dato **separado** y no lo gobierna esta hoja de Sheets — ver la nota en
+   ese mismo skill si hace falta mantenerlos consistentes.
    **Nota real (verificado contra el libro):** las claves del libro real son
    minúsculas y en español (`trm_cop_usd`, `nomina_operacion_mes`,
    `fase_capex_1..4` en filas separadas, `precio_p1_330ml`...) y los números
@@ -619,36 +619,6 @@ nombres de servicio.
     las 3 líneas juntas, no con el ahorro de mano de obra de L3 aislado),
     pero no se pagaría sola si el criterio fuera únicamente esta decisión.
 
-23. **2026-07: modo operativo externo estricto — Sheets/Odoo gobiernan; SQLite
-    es solo caché técnica.** `EXTERNAL_ONLY=true` obliga a que RRHH, demanda,
-    escenarios, inventarios planificados, unit economics, `Costos_Lote`,
-    `LibroProduccion` y `KPIs_UNS` salgan de Google Sheets; no se degrada en
-    silencio a CSV/Excel. Odoo gobierna BOM, proveedores, MOQ/lead time/precio,
-    `stock.quant`, PO, MO, clientes, SO y facturas. Las páginas *Inventario*,
-    *Órdenes Odoo*, *Producción MQTT*, *Ventas*, *RRHH* y *Fuentes del ERP*
-    consultan esas APIs como fuente primaria. El middleware anexa a Sheets los
-    KPIs y el delta válido de `AvailableQuantity` (no suma repetidamente el
-    contador absoluto). La cola, secuencia, objetivo, avance absoluto y avance
-    sincronizado viven en campos `x_ulogix_*` de `mrp.production`; el
-    middleware puede reconstruirse desde Odoo aunque se borre SQLite. Los logs
-    de SQLite quedan solo como diagnóstico técnico.
-
-24. **2026-07: pipeline de demanda reproducible + maestros laborales en Odoo.**
-    Los scripts base de `Downloads/Repo` se mapearon al pipeline v4 sin crear
-    una dependencia operativa a esa carpeta: KOF trimestral, reconstrucción
-    mensual, perfil de formato, Holt-Winters/Bates-Granger, Monte Carlo y MRP
-    se alimentan de las hojas `Forecast_*`. `tools/verificar_pipeline_demanda.py`
-    reconstruye y contrasta el resultado vigente y publica 9 controles en
-    `Forecast_QA`; los loaders cachean una sola lectura por corrida para evitar
-    cuota 429 y reconocen las fechas seriales de Sheets. `Maestro_Productos`
-    gobierna atributos físicos y precios base del ERP; Odoo gobierna BOM,
-    proveedores, stock y transacciones. La hoja `RRHH` gobierna el roster y
-    `OdooClient.sincronizar_empleados()` lo replica idempotentemente en
-    `hr.employee`/`hr.version`. No se inventan reglas de nómina: hasta configurar
-    y validar una estructura salarial colombiana en Odoo no se generan recibos.
-    `tools/qa_erp_funcional.py --flujo-completo` prueba las integraciones reales;
-    `tools/verificacion.py` conserva 17 pruebas aisladas sin escribir externamente.
-
 ## Estado actual (validado)
 
 - Pronóstico v4 sobre 21 trimestres reales de KOF: MAPE 2.9/2.9/2.1 %.
@@ -667,18 +637,15 @@ nombres de servicio.
   #1 (el ERP sigue sin gestionar OEE/TEEP en vivo, eso solo llega por MQTT).
   MRP/compras (*Órdenes Odoo*) y finanzas (*Finanzas*, comparación Base vs.
   escenario) ya usaban `demanda_activa()` desde antes.
-- Caso de negocio vivo (demanda v4, CAPEX recortado — decisión #15, sin lavadoras
+- Caso de negocio (demanda v4, CAPEX recortado — decisión #15, sin lavadoras
   ni inspección de línea, celdas robóticas a detalle de BOM real; sin
   supuesto de crecimiento de demanda — decisión #20, el horizonte de 60
   meses repite el patrón de 12 meses del ERP sin inflarlo): CAPEX $12.188 M
-  · **VPN $7.448 M · TIR 48.9 % E.A. · ROI 139.4 % · payback 28/34 m**,
-  con precios base gobernados por `Maestro_Productos` en Sheets.
-- Libro de Sheets: 36 hojas, **4.082 fórmulas y 0 errores** en la auditoría
-  completa del 2026-07.
-- Despliegue Docker validado en Windows: dashboard y middleware levantan con
-  `docker-compose.dashboard.yml`; dentro del contenedor funcionan SciPy 1.18,
-  statsmodels 0.14.6 y el pronóstico de 12 meses (MAPE 2.91/2.91/2.05 %).
-  Windows Defender/Application Control no interviene en ese runtime Linux.
+  · EBITDA incremental $13.119 M (12 m operativos) · **VPN $15.935 M · TIR
+  83.8 % E.A. · ROI 242.8 % · payback 21/24 m**.
+- Libro Excel: 23 hojas, 3.741 fórmulas, **0 errores** tras recalcular (cifras
+  del caso de negocio pendientes de regenerar el libro con el CAPEX nuevo).
+- `tools/verificacion.py`: **17/17 en verde**.
 - Libro de Sheets real (2026-07, tras la reconstrucción de la decisión #17):
   `Tiempos` consolidada (10 bloques, MLT/VSM y máquinas reales incluidos),
   OEE objetivo +5% exacto por línea, `RRHH` centralizada (28 personas, carga
@@ -687,11 +654,6 @@ nombres de servicio.
   (84 filas, mismo total de siempre), hoja `Dashboard` nueva como primera
   pestaña. `OEE_TEEP`/`Personal`/`Empleados` ya no existen (contenido
   migrado, ver decisión #17).
-- Integraciones reales validadas: Odoo SaaS 19.3 con 3 productos/BOM, 13
-  tarifas de proveedor, inventario, clientes y ciclo PO→recepción→factura
-  proveedor→MO/BOM→SO→entrega→factura cliente; RRHH 28/28 sin duplicados;
-  MQTT round-trip operativo. Único aviso de configuración: Odoo Payroll no
-  tiene todavía una estructura salarial colombiana validada (0 recibos).
 
 ## Comandos
 
@@ -700,12 +662,8 @@ nombres de servicio.
 docker compose -f docker-compose.dashboard.yml up -d --build
 docker compose -f docker-compose.dashboard.yml logs -f dashboard
 
-# QA lógico completo (17 pasos, aislado) — obligatorio antes de cerrar cambios
+# QA completo (15 pasos) — obligatorio antes de cerrar cualquier cambio
 python tools/verificacion.py
-
-# QA de integraciones reales (idempotente; --flujo-completo crea/reutiliza QA)
-python tools/qa_erp_funcional.py --flujo-completo
-python tools/verificar_pipeline_demanda.py --publicar-qa
 
 # Poblar Odoo desde cero
 python tools/bootstrap_odoo.py --dry    # plan

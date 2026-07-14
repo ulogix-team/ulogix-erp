@@ -5,7 +5,7 @@ description: Trabajar con el pronóstico de demanda, los escenarios, la polític
 
 # Pronóstico, escenarios, inventario y MRP
 
-## Datos base (fuente viva en Google Sheets)
+## Datos base (todos reales, versionados en `data/`)
 
 21 trimestres reales de KOF Colombia (2021T1–2026T1) por categoría, bajados a
 escala de planta con: participación de Bogotá, captación por producto (SHARE),
@@ -72,7 +72,7 @@ hoja `Inventarios` (rango fijo `A4:I8`), que alimenta la rotación del libro.
 
 ## MRP
 
-Explosiona la demanda del escenario activo usando BOM, scrap, MOQ, lead time y
+Explosiona la demanda del escenario activo con BOM, scrap, MOQ, lead time y
 precios de proveedor leídos de Odoo → hoja `PlanCompras` → órdenes en Odoo.
 
 ## Al modificar
@@ -80,16 +80,14 @@ precios de proveedor leídos de Odoo → hoja `PlanCompras` → órdenes en Odoo
 La trazabilidad reproducible de los scripts históricos de `Downloads/Repo`
 está documentada en `docs/PIPELINE_DEMANDA.md`; esa carpeta no es una fuente
 operativa. Ejecuta `tools/verificar_pipeline_demanda.py --publicar-qa` dentro
-de Docker: valida 9 contratos KOF→mensual→formato→HW/Bates-Granger→Monte Carlo
-y compara el recálculo v4 con la demanda vigente en Sheets (`Forecast_QA`).
-Los loaders del forecast cachean una lectura de Sheets por corrida y convierten
-fechas seriales con origen `1899-12-30`; no reviertas esas protecciones.
+de Docker: valida 9 contratos y publica `Forecast_QA`. Los loaders del forecast
+cachean una lectura de Sheets por corrida y convierten fechas seriales con
+origen `1899-12-30`; no reviertas esas protecciones.
 
 - Los módulos de `core/` son **puros**: reciben y devuelven DataFrames, sin
   Streamlit. Si necesitas UI, va en `app/`.
 - Cada uno tiene `if __name__ == "__main__":` con un resumen imprimible —
   úsalo para probar sin levantar la app.
-- Si tocas el pronóstico, **regenera y publica los derivados dentro de Docker**
-  con `docker compose -f docker-compose.dashboard.yml exec dashboard python
-  tools/recalcular_pronostico_sheets.py`.
-- Verifica dentro de Docker; no ejecutes SciPy/statsmodels en el host Windows.
+- Si tocas el pronóstico, regenera/publica dentro de Docker con
+  `tools/recalcular_pronostico_sheets.py`.
+- Corre `tools/verificacion.py` y `tools/verificar_pipeline_demanda.py`.

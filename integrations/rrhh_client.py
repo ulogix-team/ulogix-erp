@@ -1,6 +1,6 @@
 """
 Integracion RRHH: roster individual + agregado por rol, consolidados en UNA
-hoja de Google Sheets ("RRHH"), con fallback a data/empleados.csv para el
+hoja de Google Sheets ("RRHH"). En modo externo no usa data/empleados.csv; el
 roster cuando Sheets no esta configurado -- misma filosofia de resiliencia
 que integrations/sheets_client.py.
 
@@ -33,6 +33,7 @@ from config import settings
 from core.rrhh import (ARL_CLASE_POR_ROL, ARL_POR_CLASE,
                        COMPONENTES_PRESTACIONALES_COMUNES,
                        desglosar_costo_empleador, resumen_por_rol)
+from integrations.sheets_client import numero_cop
 
 HOJA = "RRHH"
 MARCA_RESUMEN = "RESUMEN POR ROL"
@@ -77,10 +78,11 @@ def _filas_de_bloque(vals: list[list[str]], idx_encabezado: int) -> list[list[st
     return out
 
 
-def leer_empleados() -> tuple[pd.DataFrame, str]:
+def leer_empleados(permitir_fallback: bool = True) -> tuple[pd.DataFrame, str]:
     """Lee el roster desde la seccion ROSTER INDIVIDUAL de la hoja RRHH; si
     Sheets no esta disponible (o falla la lectura), cae al CSV local.
     Devuelve (df, origen) con origen en {'sheets', 'csv'}."""
+    permitir_fallback = permitir_fallback and not settings.EXTERNAL_ONLY
     if _sheets_disponible():
         try:
             ws = _spreadsheet().worksheet(HOJA)
@@ -95,11 +97,13 @@ def leer_empleados() -> tuple[pd.DataFrame, str]:
                                       else encabezados + [""] * (len(filas[0]) - len(encabezados)))
                     faltan = [c for c in COLUMNAS if c not in df.columns]
                     if not faltan:
-                        df["salario_mensual_cop"] = pd.to_numeric(
-                            df["salario_mensual_cop"], errors="coerce").fillna(0.0)
+                        df["salario_mensual_cop"] = df["salario_mensual_cop"].map(numero_cop)
                         return df[COLUMNAS], "sheets"
-        except Exception:  # noqa: BLE001 -- degradar a CSV local
-            pass
+        except Exception as exc:  # noqa: BLE001 -- fallback explicito
+            if not permitir_fallback:
+                raise RuntimeError(f"No se pudo leer RRHH desde Google Sheets: {exc}") from exc
+    if not permitir_fallback:
+        raise RuntimeError("Google Sheets no esta habilitado; RRHH no usara el CSV local")
     df = pd.read_csv(CSV_LOCAL)
     return df[COLUMNAS], "csv"
 
@@ -120,11 +124,12 @@ def construir_filas_rrhh(df: pd.DataFrame) -> list[list]:
     INDIVIDUAL de la MISMA hoja -- si el usuario edita el roster directo en
     Sheets (agrega una persona, cambia un salario), el resumen y los totales
     que alimentan `Parametros!nomina_operacion_mes`/`nomina_implementacion_mes`
-    recalculan solos, sin volver a correr este script. `salario_base_cop`/
-    `factor_prestacional_pct` quedan como valores de exhibicion calculados al
-    publicar (no alimentan ningun otro calculo, mismo criterio que el AIU de
-    APU_Ingenieria). Ancho fijo de 9 columnas (la seccion mas ancha, RESUMEN)."""
-    N = 9
+    recalculan solos, sin volver a correr este script. `salario_base_cop` y
+    `factor_prestacional_pct` tambien son formulas vivas contra la tabla de
+    tasas: editar EPS/pension/ARL recalcula el desglose sin cambiar el costo
+    total empleador cargado en el roster. El ancho cubre las 12 columnas del
+    roster (los otros bloques se rellenan con celdas vacias)."""
+    N = len(COLUMNAS)
 
     def f(*vals):
         v = list(vals)
@@ -174,13 +179,18 @@ def construir_filas_rrhh(df: pd.DataFrame) -> list[list]:
         fila_actual = fila_rol_inicio + i
         rol = r["rol_personal"]
         clase = ARL_CLASE_POR_ROL.get(rol, "IV")
-        d = desglosar_costo_empleador(r["costo_unitario_cop"], clase)
         formula_conteo = (f"=COUNTIFS({rango_rol};A{fila_actual};{rango_estado};\"activo\")")
         formula_costo_total = (f"=SUMIFS({rango_salario};{rango_rol};A{fila_actual};"
                                f"{rango_estado};\"activo\")")
         formula_costo_unitario = f"=IF(B{fila_actual}=0;0;H{fila_actual}/B{fila_actual})"
+        componentes = list(COMPONENTES_PRESTACIONALES_COMUNES)
+        formula_factor = "=" + "+".join(
+            f'SUMIF($A:$A;"{comp}";$B:$B)' for comp in componentes
+        ) + f'+SUMIF($A:$A;"arl_clase_"&D{fila_actual};$B:$B)'
+        formula_salario_base = (f"=IF(G{fila_actual}=0;0;"
+                                f"G{fila_actual}/(1+F{fila_actual}/100))")
         filas.append(f(rol, formula_conteo, r["fase"], clase,
-                       d["salario_base_cop"], d["factor_prestacional_pct"],
+                       formula_salario_base, formula_factor,
                        formula_costo_unitario, formula_costo_total,
                        comentarios.get(rol, "")))
     filas.append(f(""))
@@ -234,11 +244,12 @@ def construir_filas_rrhh(df: pd.DataFrame) -> list[list]:
     return filas
 
 
-def publicar_hoja_rrhh(df: pd.DataFrame) -> str:
+def publicar_hoja_rrhh(df: pd.DataFrame, permitir_fallback: bool = True) -> str:
     """Reconstruye la hoja RRHH completa (clear + rewrite) a partir del
     roster `df` -- RESUMEN/reconciliación se recalculan solos. Devuelve
     'sheets' o 'csv' (fallback: solo persiste el roster en el CSV local,
     RESUMEN/reconciliación no tienen destino sin Sheets)."""
+    permitir_fallback = permitir_fallback and not settings.EXTERNAL_ONLY
     if _sheets_disponible():
         try:
             ss = _spreadsheet()
@@ -253,8 +264,11 @@ def publicar_hoja_rrhh(df: pd.DataFrame) -> str:
             ws.clear()
             ws.update(filas, "A1", value_input_option="USER_ENTERED")
             return "sheets"
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            if not permitir_fallback:
+                raise RuntimeError(f"No se pudo escribir RRHH en Google Sheets: {exc}") from exc
+    if not permitir_fallback:
+        raise RuntimeError("Google Sheets no esta habilitado; RRHH no escribira el CSV local")
     df[COLUMNAS].to_csv(CSV_LOCAL, index=False)
     return "csv"
 
@@ -265,15 +279,15 @@ def publicar_empleados(df: pd.DataFrame) -> str:
     return publicar_hoja_rrhh(df[COLUMNAS].copy())
 
 
-def agregar_empleado(**campos) -> str:
+def agregar_empleado(permitir_fallback: bool = True, **campos) -> str:
     """Agrega una persona al roster y reconstruye la hoja RRHH completa
     (RESUMEN cambia si el conteo/costo del rol cambia)."""
     faltan = [c for c in COLUMNAS if c not in campos]
     if faltan:
         raise ValueError(f"faltan campos: {faltan}")
-    df, _ = leer_empleados()
+    df, _ = leer_empleados(permitir_fallback=permitir_fallback)
     nuevo = pd.concat([df, pd.DataFrame([campos])[COLUMNAS]], ignore_index=True)
-    return publicar_hoja_rrhh(nuevo)
+    return publicar_hoja_rrhh(nuevo, permitir_fallback=permitir_fallback)
 
 
 def leer_nomina_personal() -> dict | None:
@@ -300,7 +314,7 @@ def leer_nomina_personal() -> dict | None:
             v = str(celda).strip().replace("$", "").replace(".", "").replace(",", "")
             if v:
                 try:
-                    valor = float(v)
+                    valor = numero_cop(celda)
                 except ValueError:
                     pass
         if valor is None:

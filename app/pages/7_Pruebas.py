@@ -219,6 +219,8 @@ with tab_sheets:
 # ============================================================ 4. Produccion (orden activa)
 with tab_prod:
     from integrations import state_store
+    from integrations.odoo_client import OdooClient
+    from integrations.sheets_client import Contabilidad
 
     st.caption(
         "El ERP publica (retained) **una sola orden de fabricación activa por "
@@ -233,11 +235,15 @@ with tab_prod:
         "de IA que puede inyectar valores aleatorios — verificado).")
 
     st.subheader("Orden activa por línea (estado real, sin MQTT)")
-    with open(settings.DATA_DIR / "parametros_planta.json", encoding="utf-8") as _f:
-        _linea_sku = {ln: cfg["producto"] for ln, cfg in json.load(_f)["lineas"].items()}
+    _linea_sku = {
+        ln: cfg["producto"]
+        for ln, cfg in Contabilidad().leer_config_pronostico(
+            "parametros_planta")["lineas"].items()
+    }
+    _odoo = OdooClient()
     filas_activas = []
     for linea, sku in _linea_sku.items():
-        po = state_store.orden_activa(sku)
+        po = _odoo.orden_activa_ulogix(linea)
         if po:
             filas_activas.append({
                 "linea": linea, "sku": sku, "po_name": po["po_name"],
@@ -253,37 +259,32 @@ with tab_prod:
     st.caption("Recarga la página (o usa el botón de abajo) para refrescar tras publicar.")
 
     st.divider()
-    st.subheader("Prueba LOCAL (sin MQTT — llama la lógica directamente)")
-    st.caption("Prueba `state_store.actualizar_disponible()` sin depender de que el "
-               "middleware esté corriendo como proceso aparte — útil para validar la "
-               "lógica de ruido/recorte/avance de cola al instante.")
+    st.subheader("Prueba directa en Odoo (sin MQTT)")
+    st.caption("Actualiza el campo de avance de la MO activa directamente en Odoo, "
+               "sin usar SQLite ni una base local. El middleware realizará la "
+               "sincronización parcial o el cierre correspondiente.")
     cl1, cl2, cl3 = st.columns(3)
     linea_local = cl1.selectbox("Línea", list(_linea_sku), key="linea_local_aq")
     sku_local = _linea_sku[linea_local]
     disponible_local = cl2.number_input("AvailableQuantity a simular", 0, 10_000_000, 100,
                                         key="disp_local")
     if cl3.button("▶ Aplicar localmente", type="primary"):
-        antes = state_store.orden_activa(sku_local)
-        completada = state_store.actualizar_disponible(sku_local, float(disponible_local))
-        despues = state_store.orden_activa(sku_local)
+        antes = _odoo.orden_activa_ulogix(linea_local)
+        resultado = _odoo.actualizar_disponible_ulogix(
+            linea_local, float(disponible_local))
+        despues = _odoo.orden_activa_ulogix(linea_local)
         if antes is None:
             st.warning(f"No hay ninguna orden abierta para {sku_local} — créala primero "
                       "en *Órdenes Odoo*.")
-        elif completada:
-            st.success(f"✅ {completada['po_name']} quedó **cumplida** "
-                      f"({completada['qty_producida']:,.0f}/{completada['qty_objetivo']:,.0f}). "
-                      "En el middleware real esto dispara `completar_orden_fabricacion()` "
-                      "(Odoo) y avanza la cola.")
-            if despues:
-                st.caption(f"Siguiente orden activa: **{despues['po_name']}** "
-                          f"({despues['qty_producida']:,.0f}/{despues['qty_objetivo']:,.0f})")
-            else:
-                st.caption("Cola vacía: no queda ninguna otra orden abierta para ese SKU.")
-        elif despues and antes and despues["qty_producida"] == antes["qty_producida"]:
+        elif resultado and resultado["completada"]:
+            st.success(f"✅ {resultado['mo_name']} alcanzó el objetivo en Odoo "
+                      f"({resultado['qty_producida']:,.0f}/"
+                      f"{resultado['qty_objetivo']:,.0f}).")
+        elif resultado and resultado["ignorado"]:
             st.info(f"Sin cambio: {disponible_local:,.0f} no es mayor que el avance ya "
                    f"registrado ({antes['qty_producida']:,.0f}) — tratado como ruido "
                    "(la producción real nunca retrocede) y descartado.")
-        else:
+        elif despues:
             st.info(f"Avance registrado sin completar la orden todavía: "
                    f"{despues['qty_producida']:,.0f}/{despues['qty_objetivo']:,.0f}.")
 

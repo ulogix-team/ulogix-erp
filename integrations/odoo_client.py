@@ -48,6 +48,8 @@ from __future__ import annotations
 
 import ssl
 import xmlrpc.client
+import math
+from datetime import date, timedelta
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -73,6 +75,8 @@ class LineaPedido:
 class OdooClient:
     def __init__(self) -> None:
         self.dry_run = settings.DRY_RUN_FORZADO or not settings.ODOO_ENABLED
+        if settings.EXTERNAL_ONLY and self.dry_run:
+            raise OdooError("EXTERNAL_ONLY=true: Odoo real es obligatorio; dry-run deshabilitado")
         self._uid: int | None = None
         self._modelos = None
         self._contador_dry = 0
@@ -97,6 +101,16 @@ class OdooClient:
         return self._modelos.execute_kw(settings.ODOO_DB, self._uid,
                                         settings.ODOO_API_KEY, modelo, metodo,
                                         args, kwargs or {})
+
+    def _campos_disponibles(self, modelo: str) -> set[str]:
+        """Campos expuestos por la version real de Odoo.
+
+        Odoo cambia nombres entre versiones SaaS; consultar ``fields_get``
+        evita que una lectura completa falle por pedir un campo opcional.
+        """
+        if self.dry_run:
+            return set()
+        return set(self._kw(modelo, "fields_get", [], {"attributes": ["type"]}))
 
     def _buscar_orden_existente(self, modelo: str, campo_referencia: str,
                                 referencia: str) -> int | None:
@@ -159,6 +173,140 @@ class OdooClient:
         except Exception:  # noqa: BLE001
             vals["type"] = "consu"
             return self._kw("product.product", "create", [vals])
+
+    # -------------------------------------------------------------- RRHH / nomina
+    def _asegurar_por_nombre(self, modelo: str, nombre: str,
+                             extra: dict | None = None) -> int:
+        ids = self._kw(modelo, "search", [[["name", "=", nombre]]], {"limit": 1})
+        if ids:
+            return ids[0]
+        vals = {"name": nombre, **(extra or {})}
+        return self._kw(modelo, "create", [vals])
+
+    def sincronizar_empleados(self, empleados: list[dict]) -> dict:
+        """Replica el roster vivo de Sheets en Empleados/Nomina de Odoo.
+
+        Sheets sigue siendo la fuente editable. ``salario_mensual_cop`` es
+        costo total empleador; Odoo ``wage`` recibe el salario base implicito
+        y los campos ``x_ulogix_*`` conservan el costo y su desglose. Odoo 19
+        administra el contrato como ``hr.version`` a traves de los campos
+        delegados de ``hr.employee``.
+        """
+        if self.dry_run:
+            return {"creados": 0, "actualizados": 0, "desactivados": 0,
+                    "modo": "dry-run"}
+        requeridos = {"x_ulogix_managed", "x_ulogix_rol", "x_ulogix_linea",
+                      "x_ulogix_turno", "x_ulogix_fase", "x_ulogix_estado",
+                      "x_ulogix_costo_empleador", "x_ulogix_factor_prestacional",
+                      "x_ulogix_arl_clase"}
+        faltan = requeridos - self._campos_disponibles("hr.employee")
+        if faltan:
+            raise OdooError("Faltan campos RRHH x_ulogix_*: " + ", ".join(sorted(faltan)))
+
+        from core.rrhh import ARL_CLASE_POR_ROL, desglosar_costo_empleador
+
+        creados = actualizados = 0
+        cedulas_vivas: set[str] = set()
+        ids_resultado: list[int] = []
+        for r in empleados:
+            cedula = str(r.get("cedula") or "").strip()
+            nombre = str(r.get("nombre") or "").strip()
+            if not cedula or not nombre:
+                raise OdooError("Cada empleado requiere cedula y nombre")
+            cedulas_vivas.add(cedula)
+            fase = str(r.get("fase") or "").strip()
+            cargo = str(r.get("cargo") or r.get("rol_personal") or "Sin cargo").strip()
+            departamento = ("Implementacion ULogix" if fase == "Implementacion"
+                            else "Operacion Fontibon")
+            dep_id = self._asegurar_por_nombre(
+                "hr.department", departamento, {"company_id": settings.ODOO_COMPANY_ID})
+            job_id = self._asegurar_por_nombre(
+                "hr.job", cargo, {"company_id": settings.ODOO_COMPANY_ID})
+            rol = str(r.get("rol_personal") or "").strip()
+            arl = ARL_CLASE_POR_ROL.get(rol, "IV")
+            costo = float(r.get("salario_mensual_cop") or 0)
+            desglose = desglosar_costo_empleador(costo, arl)
+            fecha = str(r.get("fecha_ingreso") or date.today().isoformat())[:10]
+            estado = str(r.get("estado") or "activo").lower().strip()
+            vals = {
+                "name": nombre,
+                "identification_id": cedula,
+                "job_id": job_id,
+                "department_id": dep_id,
+                "active": estado != "inactivo",
+                "work_email": str(r.get("email") or "").strip() or False,
+                "work_phone": str(r.get("telefono") or "").strip() or False,
+                "wage": float(desglose["salario_base_cop"]),
+                "date_version": fecha,
+                "x_ulogix_managed": True,
+                "x_ulogix_rol": rol,
+                "x_ulogix_linea": str(r.get("linea") or "").strip(),
+                "x_ulogix_turno": str(r.get("turno") or "").strip(),
+                "x_ulogix_fase": fase,
+                "x_ulogix_estado": estado,
+                "x_ulogix_costo_empleador": costo,
+                "x_ulogix_factor_prestacional": float(
+                    desglose["factor_prestacional_pct"]),
+                "x_ulogix_arl_clase": arl,
+            }
+            ids = self._kw("hr.employee", "search",
+                           [[["identification_id", "=", cedula]]],
+                           {"limit": 1, "context": {"active_test": False}})
+            if ids:
+                self._kw("hr.employee", "write", [[ids[0]], vals])
+                emp_id = ids[0]
+                actualizados += 1
+            else:
+                emp_id = self._kw("hr.employee", "create", [vals])
+                creados += 1
+            ids_resultado.append(emp_id)
+
+        gestionados = self._kw("hr.employee", "search",
+                               [[["x_ulogix_managed", "=", True]]],
+                               {"context": {"active_test": False}})
+        desactivar = []
+        if gestionados:
+            actuales = self._kw("hr.employee", "read",
+                                [gestionados, ["identification_id", "active"]])
+            desactivar = [e["id"] for e in actuales
+                          if str(e.get("identification_id") or "") not in cedulas_vivas
+                          and e.get("active")]
+            if desactivar:
+                self._kw("hr.employee", "write", [desactivar, {"active": False}])
+        return {"creados": creados, "actualizados": actualizados,
+                "desactivados": len(desactivar), "ids": ids_resultado,
+                "modo": "odoo"}
+
+    def listar_empleados_ulogix(self, incluir_inactivos: bool = True) -> list[dict]:
+        if self.dry_run:
+            return []
+        dominio = [["x_ulogix_managed", "=", True]]
+        ids = self._kw("hr.employee", "search", [dominio], {
+            "order": "name", "context": {"active_test": not incluir_inactivos}})
+        if not ids:
+            return []
+        campos = ["name", "identification_id", "job_id", "department_id", "active",
+                  "wage", "work_email", "work_phone", "version_id",
+                  "x_ulogix_rol", "x_ulogix_linea", "x_ulogix_turno",
+                  "x_ulogix_fase", "x_ulogix_estado", "x_ulogix_costo_empleador",
+                  "x_ulogix_factor_prestacional", "x_ulogix_arl_clase"]
+        return self._kw("hr.employee", "read", [ids, campos])
+
+    def estado_nomina(self) -> dict:
+        """Diagnostico del maestro laboral y configuracion de payroll."""
+        if self.dry_run:
+            return {"empleados": 0, "versiones": 0, "estructuras": 0,
+                    "recibos": 0, "modo": "dry-run"}
+        empleados = self.listar_empleados_ulogix()
+        versiones = self._kw("hr.version", "search_count",
+                             [[["employee_id", "in", [e["id"] for e in empleados]]]]) \
+            if empleados else 0
+        estructuras = self._kw("hr.payroll.structure", "search_count", [[]])
+        recibos = self._kw("hr.payslip", "search_count",
+                           [[["employee_id", "in", [e["id"] for e in empleados]]]]) \
+            if empleados else 0
+        return {"empleados": len(empleados), "versiones": versiones,
+                "estructuras": estructuras, "recibos": recibos, "modo": "odoo"}
 
     # -------------------------------------------------------------- ordenes de compra
     def crear_orden_compra(self, proveedor: str, lineas: list[LineaPedido],
@@ -305,6 +453,8 @@ class OdooClient:
             borradores = self._kw("account.move", "search",
                                   [[["id", "in", factura_ids], ["state", "=", "draft"]]])
             if borradores:
+                self._kw("account.move", "write",
+                         [borradores, {"invoice_date": date.today().isoformat()}])
                 self._kw("account.move", "action_post", [borradores])
             state_store.log("odoo", "facturar_orden_compra",
                             f"{po_name}: factura(s) {factura_ids}")
@@ -356,6 +506,27 @@ class OdooClient:
                                 "(mrp.bom) en Odoo — corre tools/bootstrap_odoo.py")
             vals = {"product_id": pid, "bom_id": bom_ids[0], "product_qty": cantidad,
                     "origin": referencia}
+            campos_mo = self._campos_disponibles("mrp.production")
+            if "x_ulogix_linea" in campos_mo:
+                tmpl = self._kw("product.template", "read",
+                                [[tmpl_id], ["x_ulogix_linea"]])[0]
+                linea = tmpl.get("x_ulogix_linea") or ""
+                partes = referencia.split("/")
+                mes = partes[1] if len(partes) > 1 else ""
+                prev = self._kw("mrp.production", "search_read",
+                                [[['x_ulogix_linea', '=', linea],
+                                  ['origin', 'like', 'ULOGIX/%']]],
+                                {"fields": ["x_ulogix_sequence"],
+                                 "order": "x_ulogix_sequence desc,id desc", "limit": 1})
+                secuencia = int(prev[0].get("x_ulogix_sequence") or 0) + 1 if prev else 1
+                vals.update({
+                    "x_ulogix_linea": linea, "x_ulogix_mes": mes,
+                    "x_ulogix_root_origin": referencia,
+                    "x_ulogix_target_qty": cantidad,
+                    "x_ulogix_available_qty": 0.0,
+                    "x_ulogix_synced_qty": 0.0,
+                    "x_ulogix_sequence": secuencia,
+                })
             mo_id = self._kw("mrp.production", "create", [vals])
             name = self._kw("mrp.production", "read", [[mo_id], ["name"]])[0]["name"]
             estado = "draft"
@@ -389,6 +560,11 @@ class OdooClient:
             return {"ok": True, "modo": "dry-run"}
         try:
             estado = self._kw("mrp.production", "read", [[mo_id], ["state"]])[0]["state"]
+            if estado == "done":
+                return {"ok": True, "modo": "existente-completada"}
+            if estado == "cancel":
+                return {"ok": False, "modo": "error",
+                        "detalle": f"MO {mo_id} esta cancelada"}
             if estado == "draft":
                 self._kw("mrp.production", "action_confirm", [[mo_id]])
             if estado not in ("done", "cancel"):
@@ -620,8 +796,11 @@ class OdooClient:
         de una orden de venta confirmada: el cobro que le faltaba a la suite
         despues de compra-insumo -> fabricacion -> venta. Idempotente: si ya
         existe una factura no cancelada con `invoice_origin=so_name` la
-        reutiliza. Prueba `_create_invoices` (Odoo 14+) con fallback a
-        `action_invoice_create` (versiones previas).
+        reutiliza. En Odoo 19 usa el asistente publico
+        `sale.advance.payment.inv`. Algunas instalaciones ejecutan
+        `create_invoices` correctamente pero devuelven un Fault XML-RPC al
+        intentar serializar ``None``; por eso la evidencia definitiva es
+        releer `account.move`, no confiar solo en la respuesta del wizard.
         """
         if self.dry_run or so_id is None:
             state_store.log("odoo", "facturar_orden_venta (dry-run)", so_name or str(so_id))
@@ -632,13 +811,27 @@ class OdooClient:
                                      ["move_type", "=", "out_invoice"],
                                      ["state", "!=", "cancel"]]])
             if not factura_ids:
+                # Odoo SaaS 19 ya no expone metodos privados por XML-RPC
+                # (`sale.order._create_invoices`) ni el legado
+                # `action_invoice_create`. Se usa el wizard publico oficial.
+                wiz_id = self._kw("sale.advance.payment.inv", "create", [{
+                    "advance_payment_method": "delivered",
+                    "sale_order_ids": [(6, 0, [so_id])],
+                }])
+                fallo_wizard = None
                 try:
-                    self._kw("sale.order", "_create_invoices", [[so_id]])
-                except Exception:  # noqa: BLE001
-                    self._kw("sale.order", "action_invoice_create", [[so_id]])
+                    self._kw("sale.advance.payment.inv", "create_invoices", [[wiz_id]],
+                             {"context": {"active_model": "sale.order",
+                                          "active_id": so_id,
+                                          "active_ids": [so_id]}})
+                except Exception as exc:  # Odoo puede ejecutar y fallar al serializar None
+                    fallo_wizard = exc
                 factura_ids = self._kw("account.move", "search",
                                        [[["invoice_origin", "=", so_name],
-                                         ["move_type", "=", "out_invoice"]]])
+                                         ["move_type", "=", "out_invoice"],
+                                         ["state", "!=", "cancel"]]])
+                if fallo_wizard and not factura_ids:
+                    raise fallo_wizard
             if not factura_ids:
                 return {"ok": False, "modo": "error",
                         "detalle": "Odoo no genero la factura (revisa que la SO "
@@ -646,6 +839,8 @@ class OdooClient:
             borradores = self._kw("account.move", "search",
                                   [[["id", "in", factura_ids], ["state", "=", "draft"]]])
             if borradores:
+                self._kw("account.move", "write",
+                         [borradores, {"invoice_date": date.today().isoformat()}])
                 self._kw("account.move", "action_post", [borradores])
             state_store.log("odoo", "facturar_orden_venta",
                             f"{so_name}: factura(s) {factura_ids}")
@@ -659,9 +854,13 @@ class OdooClient:
             return []
         ids = self._kw("sale.order", "search", [[]],
                        {"limit": limit, "order": "id desc"})
-        return self._kw("sale.order", "read",
-                        [ids, ["name", "partner_id", "state", "amount_total",
-                               "client_order_ref", "date_order"]])
+        filas = self._kw("sale.order", "read",
+                         [ids, ["name", "partner_id", "state", "amount_total",
+                                "client_order_ref", "date_order"]])
+        filas = self._aplanar_many2one(filas, "partner_id", "cliente")
+        return self._normalizar_filas_tabla(
+            filas, texto=("name", "cliente", "state", "client_order_ref", "date_order"),
+            numerico=("amount_total",))
 
     def listar_facturas(self, tipo: str = "out_invoice", limit: int = 40) -> list[dict]:
         """`tipo`: 'out_invoice' (cliente) o 'in_invoice' (proveedor)."""
@@ -669,17 +868,191 @@ class OdooClient:
             return []
         ids = self._kw("account.move", "search", [[["move_type", "=", tipo]]],
                        {"limit": limit, "order": "id desc"})
-        return self._kw("account.move", "read",
-                        [ids, ["name", "partner_id", "state", "amount_total",
-                               "invoice_origin", "invoice_date"]])
+        filas = self._kw("account.move", "read",
+                         [ids, ["name", "partner_id", "state", "amount_total",
+                                "invoice_origin", "invoice_date"]])
+        filas = self._aplanar_many2one(filas, "partner_id", "tercero")
+        return self._normalizar_filas_tabla(
+            filas, texto=("name", "tercero", "state", "invoice_origin", "invoice_date"),
+            numerico=("amount_total",))
 
     def listar_ordenes_fabricacion(self, limit: int = 40) -> list[dict]:
         if self.dry_run:
             return []
         ids = self._kw("mrp.production", "search", [[]],
                        {"limit": limit, "order": "id desc"})
-        return self._kw("mrp.production", "read",
-                        [ids, ["name", "product_id", "product_qty", "state", "origin"]])
+        filas = self._kw("mrp.production", "read",
+                         [ids, ["name", "product_id", "product_qty", "state", "origin"]])
+        filas = self._aplanar_many2one(filas, "product_id", "producto")
+        return self._normalizar_filas_tabla(
+            filas, texto=("name", "producto", "state", "origin"),
+            numerico=("product_qty",))
+
+    @staticmethod
+    def _aplanar_many2one(filas: list[dict], campo: str,
+                          campo_nombre: str) -> list[dict]:
+        """Convierte ``[id, nombre]`` de XML-RPC en columnas escalares.
+
+        Pandas tolera la mezcla de enteros y listas/strings, pero PyArrow no;
+        Streamlit usa Arrow para ``st.dataframe``. Mantener el id numerico y
+        separar el nombre evita errores de conversion en cualquier tabla.
+        """
+        salida: list[dict] = []
+        for original in filas:
+            fila = dict(original)
+            valor = fila.get(campo)
+            if isinstance(valor, (list, tuple)):
+                fila[campo] = valor[0] if valor else None
+                fila[campo_nombre] = str(valor[1]) if len(valor) > 1 else ""
+            elif isinstance(valor, (int, float)) and not isinstance(valor, bool):
+                fila[campo] = int(valor)
+                fila[campo_nombre] = ""
+            elif valor:
+                fila[campo] = None
+                fila[campo_nombre] = str(valor)
+            else:
+                fila[campo] = None
+                fila[campo_nombre] = ""
+            salida.append(fila)
+        return salida
+
+    @staticmethod
+    def _normalizar_filas_tabla(filas: list[dict],
+                                texto: tuple[str, ...] = (),
+                                numerico: tuple[str, ...] = ()) -> list[dict]:
+        """Elimina los ``False`` que Odoo usa como nulos en tablas publicas.
+
+        XML-RPC representa un Char/Date vacio como ``False``. Si otras filas
+        contienen texto, Pandas crea una columna ``object`` mixta que PyArrow
+        no puede serializar. Los campos declarados quedan homogeneos antes de
+        llegar a Streamlit.
+        """
+        salida: list[dict] = []
+        for original in filas:
+            fila = dict(original)
+            for campo in texto:
+                valor = fila.get(campo)
+                fila[campo] = "" if valor is False or valor is None else str(valor)
+            for campo in numerico:
+                valor = fila.get(campo)
+                fila[campo] = 0.0 if valor is False or valor is None else float(valor)
+            salida.append(fila)
+        return salida
+
+    def listar_mo_ulogix_activas(self, linea: str | None = None,
+                                 limit: int = 200) -> list[dict]:
+        """Cola de manufactura ULOGIX gobernada enteramente por Odoo."""
+        if self.dry_run:
+            por_sku = {"P1-CC350-RGB": "L1", "P2-QT1500-PET": "L2",
+                       "P3-GARR25L": "L3"}
+            salida = []
+            for po in reversed(state_store.listar_pos(limit)):
+                if po.get("estado") != "abierta":
+                    continue
+                linea_po = po.get("linea") or por_sku.get(po.get("sku"), "")
+                if linea and linea_po != linea:
+                    continue
+                salida.append({**po, "id": po.get("mo_id"),
+                               "name": po.get("mo_name"),
+                               "x_ulogix_linea": linea_po,
+                               "x_ulogix_mes": po.get("detalle") or "",
+                               "x_ulogix_root_origin": po.get("detalle") or po["po_name"],
+                               "x_ulogix_target_qty": po["qty_objetivo"],
+                               "x_ulogix_available_qty": po["qty_producida"],
+                               "x_ulogix_synced_qty": po["qty_sincronizada_odoo"],
+                               "x_ulogix_sequence": po["id"]})
+                if len(salida) >= limit:
+                    break
+            return salida
+        campos = self._campos_disponibles("mrp.production")
+        requeridos = {"x_ulogix_linea", "x_ulogix_root_origin",
+                      "x_ulogix_target_qty", "x_ulogix_available_qty",
+                      "x_ulogix_synced_qty", "x_ulogix_sequence"}
+        if not requeridos.issubset(campos):
+            raise OdooError("Faltan campos x_ulogix_* en mrp.production")
+        dominio = [["origin", "like", "ULOGIX/%"],
+                   ["state", "not in", ["done", "cancel"]]]
+        if linea:
+            dominio.append(["x_ulogix_linea", "=", linea])
+        ids = self._kw("mrp.production", "search", [dominio],
+                       {"limit": limit, "order": "x_ulogix_sequence,id"})
+        leer = ["name", "product_id", "product_qty", "state", "origin",
+                "x_ulogix_linea", "x_ulogix_mes", "x_ulogix_root_origin",
+                "x_ulogix_target_qty", "x_ulogix_available_qty",
+                "x_ulogix_synced_qty", "x_ulogix_sequence"]
+        mos = self._kw("mrp.production", "read", [ids, leer]) if ids else []
+        pids = sorted({m["product_id"][0] for m in mos if m.get("product_id")})
+        productos = self._kw("product.product", "read",
+                             [pids, ["default_code"]]) if pids else []
+        codigos = {p["id"]: p.get("default_code") or "" for p in productos}
+        salida = []
+        for m in mos:
+            objetivo = float(m.get("x_ulogix_target_qty") or m.get("product_qty") or 0)
+            disponible = float(m.get("x_ulogix_available_qty") or 0)
+            salida.append({**m, "sku": codigos.get(m["product_id"][0], ""),
+                            "qty_objetivo": objetivo,
+                            "qty_producida": disponible,
+                            "qty_sincronizada_odoo": float(m.get("x_ulogix_synced_qty") or 0),
+                            "mo_id": m["id"], "mo_name": m["name"],
+                            "po_name": m["name"],
+                            "estado": "abierta"})
+        return salida
+
+    def orden_activa_ulogix(self, linea: str) -> dict | None:
+        if self.dry_run:
+            sku = {"L1": "P1-CC350-RGB", "L2": "P2-QT1500-PET",
+                   "L3": "P3-GARR25L"}.get(linea)
+            po = state_store.orden_activa(sku) if sku else None
+            if po is None:
+                return None
+            return {**po, "id": po.get("mo_id"), "name": po.get("mo_name"),
+                    "x_ulogix_linea": linea,
+                    "x_ulogix_mes": po.get("detalle") or "",
+                    "x_ulogix_root_origin": po.get("detalle") or po["po_name"],
+                    "x_ulogix_target_qty": po["qty_objetivo"],
+                    "x_ulogix_available_qty": po["qty_producida"],
+                    "x_ulogix_synced_qty": po["qty_sincronizada_odoo"],
+                    "x_ulogix_sequence": po["id"]}
+        mos = self.listar_mo_ulogix_activas(linea, 1)
+        return mos[0] if mos else None
+
+    def actualizar_disponible_ulogix(self, linea: str, disponible: float) -> dict | None:
+        """Valida y persiste el contador absoluto MES en la MO activa."""
+        mo = self.orden_activa_ulogix(linea)
+        if mo is None:
+            return None
+        anterior = float(mo["qty_producida"])
+        if disponible < anterior:
+            return {**mo, "delta": 0.0, "ignorado": True, "completada": False}
+        nuevo = min(float(disponible), float(mo["qty_objetivo"]))
+        if self.dry_run:
+            if nuevo <= anterior + 1e-9:
+                return {**mo, "delta": 0.0, "ignorado": True,
+                        "completada": False}
+            state_store.actualizar_disponible(mo["sku"], nuevo)
+            return {**mo, "qty_producida": nuevo, "delta": nuevo - anterior,
+                    "ignorado": False,
+                    "completada": nuevo >= float(mo["qty_objetivo"])}
+        self._kw("mrp.production", "write",
+                 [[mo["mo_id"]], {"x_ulogix_available_qty": nuevo}])
+        return {**mo, "qty_producida": nuevo, "delta": nuevo - anterior,
+                "ignorado": False, "completada": nuevo >= float(mo["qty_objetivo"])}
+
+    def heredar_trazabilidad_backorder(self, anterior: dict, mo_id_nuevo: int,
+                                       mo_name_nuevo: str, sincronizada: float) -> dict:
+        vals = {
+            "x_ulogix_linea": anterior["x_ulogix_linea"],
+            "x_ulogix_mes": anterior.get("x_ulogix_mes") or "",
+            "x_ulogix_root_origin": anterior.get("x_ulogix_root_origin") or anterior["origin"],
+            "x_ulogix_target_qty": anterior["qty_objetivo"],
+            "x_ulogix_available_qty": anterior["qty_producida"],
+            "x_ulogix_synced_qty": sincronizada,
+            "x_ulogix_sequence": anterior.get("x_ulogix_sequence") or 0,
+        }
+        self._kw("mrp.production", "write", [[mo_id_nuevo], vals])
+        return {**anterior, **vals, "mo_id": mo_id_nuevo, "id": mo_id_nuevo,
+                "mo_name": mo_name_nuevo, "name": mo_name_nuevo,
+                "qty_sincronizada_odoo": sincronizada}
 
     def listar_ordenes(self, limit: int = 40) -> list[dict]:
         if self.dry_run:
@@ -688,6 +1061,218 @@ class OdooClient:
                     for p in state_store.listar_pos(limit)]
         ids = self._kw("purchase.order", "search", [[]],
                        {"limit": limit, "order": "id desc"})
-        return self._kw("purchase.order", "read",
-                        [ids, ["name", "partner_id", "state", "amount_total",
-                               "origin", "date_order"]])
+        filas = self._kw("purchase.order", "read",
+                         [ids, ["name", "partner_id", "state", "amount_total",
+                                "origin", "date_order"]])
+        filas = self._aplanar_many2one(filas, "partner_id", "proveedor")
+        return self._normalizar_filas_tabla(
+            filas, texto=("name", "proveedor", "state", "origin", "date_order"),
+            numerico=("amount_total",))
+
+    # ------------------------------------------------------ maestros/stock de lectura
+    def listar_clientes(self, limit: int = 200) -> list[dict]:
+        """Clientes activos de Odoo; no crea ni modifica contactos."""
+        if self.dry_run:
+            return []
+        ids = self._kw("res.partner", "search",
+                       [[["customer_rank", ">", 0], ["active", "=", True]]],
+                       {"limit": limit, "order": "name"})
+        campos = ["name", "email", "phone", "customer_rank"]
+        if "x_ulogix_canal" in self._campos_disponibles("res.partner"):
+            campos += ["city", "x_ulogix_canal", "x_ulogix_participacion"]
+        filas = self._kw("res.partner", "read", [ids, campos])
+        texto = tuple(c for c in ("name", "email", "phone", "city",
+                                  "x_ulogix_canal") if c in campos)
+        numerico = tuple(c for c in ("customer_rank", "x_ulogix_participacion")
+                         if c in campos)
+        return self._normalizar_filas_tabla(filas, texto=texto, numerico=numerico)
+
+    def listar_stock(self, limit: int = 5000) -> list[dict]:
+        """Saldo agregado de ``stock.quant`` en ubicaciones internas.
+
+        Esta es la fuente de verdad del inventario mostrado por el ERP. La
+        tabla SQLite ``inventario_stock`` queda como cache operativo del
+        puente MQTT y nunca se usa para reemplazar este saldo.
+        """
+        if self.dry_run:
+            return []
+        ids = self._kw("stock.quant", "search",
+                       [[["location_id.usage", "=", "internal"]]],
+                       {"limit": limit})
+        if not ids:
+            return []
+        campos = self._campos_disponibles("stock.quant")
+        leer = [c for c in ["product_id", "quantity", "reserved_quantity"]
+                if c in campos]
+        quants = self._kw("stock.quant", "read", [ids, leer])
+        pids = sorted({q["product_id"][0] for q in quants if q.get("product_id")})
+        productos = self._kw(
+            "product.product", "read",
+            [pids, ["default_code", "display_name", "uom_id"]]) if pids else []
+        por_id = {p["id"]: p for p in productos}
+        agregado: dict[int, dict] = {}
+        for q in quants:
+            if not q.get("product_id"):
+                continue
+            pid = q["product_id"][0]
+            p = por_id.get(pid, {})
+            fila = agregado.setdefault(pid, {
+                "product_id": pid,
+                "codigo": p.get("default_code") or "",
+                "producto": p.get("display_name") or q["product_id"][1],
+                "uom": (p.get("uom_id") or [None, ""])[1],
+                "cantidad": 0.0,
+                "reservada": 0.0,
+            })
+            fila["cantidad"] += float(q.get("quantity") or 0.0)
+            fila["reservada"] += float(q.get("reserved_quantity") or 0.0)
+        for fila in agregado.values():
+            fila["disponible"] = fila["cantidad"] - fila["reservada"]
+        return sorted(agregado.values(), key=lambda x: (x["codigo"], x["producto"]))
+
+    def listar_lotes_fabricados(self, limit: int = 300) -> list[dict]:
+        """MO terminadas en Odoo y cantidad aun no comprometida en SO.
+
+        La vinculacion usa el contrato idempotente
+        ``ULOGIX-VTA/<mo_name>/<cliente>``. Se cuentan ordenes de venta no
+        canceladas para impedir vender dos veces un mismo lote, incluso si
+        el cache SQLite se borra o queda desactualizado.
+        """
+        if self.dry_run:
+            return []
+        campos_mo = self._campos_disponibles("mrp.production")
+        campos = [c for c in ["name", "product_id", "product_qty", "qty_produced",
+                              "state", "origin", "date_finished"] if c in campos_mo]
+        ids = self._kw("mrp.production", "search",
+                       [[["state", "=", "done"], ["origin", "like", "ULOGIX/%"]]],
+                       {"limit": limit, "order": "id desc"})
+        mos = self._kw("mrp.production", "read", [ids, campos]) if ids else []
+        pids = sorted({m["product_id"][0] for m in mos if m.get("product_id")})
+        productos = self._kw("product.product", "read",
+                             [pids, ["default_code", "display_name", "list_price"]]) \
+            if pids else []
+        por_id = {p["id"]: p for p in productos}
+        salida = []
+        for mo in mos:
+            pid = mo["product_id"][0]
+            p = por_id.get(pid, {})
+            prefijo = f"ULOGIX-VTA/{mo['name']}/"
+            so_ids = self._kw("sale.order", "search",
+                              [[["client_order_ref", "like", prefijo + "%"],
+                                ["state", "!=", "cancel"]]])
+            comprometida = 0.0
+            if so_ids:
+                line_ids = self._kw("sale.order.line", "search",
+                                    [[["order_id", "in", so_ids],
+                                      ["product_id", "=", pid]]])
+                if line_ids:
+                    lineas = self._kw("sale.order.line", "read",
+                                      [line_ids, ["product_uom_qty"]])
+                    comprometida = sum(float(l.get("product_uom_qty") or 0) for l in lineas)
+            producida = float(mo.get("qty_produced") or mo.get("product_qty") or 0)
+            salida.append({
+                "mo_id": mo["id"], "mo_name": mo["name"],
+                "sku": p.get("default_code") or "",
+                "producto": p.get("display_name") or mo["product_id"][1],
+                "cantidad_producida": producida,
+                "cantidad_comprometida": comprometida,
+                "cantidad_disponible": max(0.0, producida - comprometida),
+                "precio_venta_cop": float(p.get("list_price") or 0),
+                "origin": mo.get("origin") or "",
+                "date_finished": mo.get("date_finished") or "",
+            })
+        return salida
+
+    def plan_compras_desde_demanda(self, demanda_mensual, scrap: float = 0.02,
+                                   cobertura_meses: int = 3) -> list[dict]:
+        """Explosión MRP usando exclusivamente BOM, stock y proveedores Odoo.
+
+        ``demanda_mensual`` sigue siendo el plan aprobado por el ERP/Sheets;
+        las razones de consumo, existencias, MOQ, precio y plazo se leen de
+        ``mrp.bom``, ``stock.quant`` y ``product.supplierinfo``. No consulta
+        ``data/bom.csv`` ni otro maestro local.
+        """
+        if self.dry_run:
+            raise OdooError("El MRP externo requiere conexion real a Odoo")
+        meses = {"Enero": 1, "Ene": 1, "Febrero": 2, "Feb": 2,
+                 "Marzo": 3, "Mar": 3, "Abril": 4, "Abr": 4,
+                 "Mayo": 5, "May": 5, "Junio": 6, "Jun": 6,
+                 "Julio": 7, "Jul": 7, "Agosto": 8, "Ago": 8,
+                 "Septiembre": 9, "Sep": 9, "Octubre": 10, "Oct": 10,
+                 "Noviembre": 11, "Nov": 11, "Diciembre": 12, "Dic": 12}
+        from core.forecast import normalizar_demanda_mensual
+        demanda_mensual = normalizar_demanda_mensual(demanda_mensual)
+        faltan = {"ano", "mes", "etiqueta"} - set(demanda_mensual.columns)
+        if faltan:
+            raise OdooError("Demanda mensual sin campos temporales: "
+                            + ", ".join(sorted(faltan)))
+        registros = demanda_mensual.head(cobertura_meses).to_dict("records")
+        stock = {r["codigo"]: float(r["disponible"]) for r in self.listar_stock()}
+        filas: list[dict] = []
+        for m in registros:
+            ano, mes = int(m["ano"]), str(m["mes"])
+            necesidad = date(ano, meses[mes], 1)
+            for clave, unidades in m.items():
+                if not str(clave).endswith("_unidades"):
+                    continue
+                sku = str(clave)[:-9]
+                unidades = float(unidades)
+                pids = self._kw("product.product", "search",
+                                 [[["default_code", "=", sku]]], {"limit": 1})
+                if not pids:
+                    raise OdooError(f"Producto {sku} no existe en Odoo")
+                prod = self._kw("product.product", "read",
+                                [pids, ["product_tmpl_id"]])[0]
+                tmpl = prod["product_tmpl_id"][0]
+                bom_ids = self._kw("mrp.bom", "search",
+                                   [[["product_tmpl_id", "=", tmpl]]], {"limit": 1})
+                if not bom_ids:
+                    raise OdooError(f"{sku} no tiene BOM en Odoo")
+                bom = self._kw("mrp.bom", "read",
+                               [bom_ids, ["product_qty", "bom_line_ids"]])[0]
+                campos_linea = self._campos_disponibles("mrp.bom.line")
+                campo_uom = "product_uom_id" if "product_uom_id" in campos_linea else "product_uom"
+                leer_linea = ["product_id", "product_qty"]
+                if campo_uom in campos_linea:
+                    leer_linea.append(campo_uom)
+                lineas = self._kw("mrp.bom.line", "read",
+                                  [bom["bom_line_ids"], leer_linea])
+                base_bom = float(bom.get("product_qty") or 1.0)
+                for linea in lineas:
+                    comp_id = linea["product_id"][0]
+                    comp = self._kw("product.product", "read",
+                                    [[comp_id], ["default_code", "display_name",
+                                                 "product_tmpl_id"]])[0]
+                    codigo = comp.get("default_code") or ""
+                    ratio = float(linea["product_qty"]) / base_bom
+                    bruto = unidades * ratio * (1 + scrap)
+                    usado = min(stock.get(codigo, 0.0), bruto)
+                    stock[codigo] = stock.get(codigo, 0.0) - usado
+                    neto = bruto - usado
+                    if neto <= 1e-9:
+                        continue
+                    sup_ids = self._kw(
+                        "product.supplierinfo", "search",
+                        [[["product_tmpl_id", "=", comp["product_tmpl_id"][0]]]],
+                        {"limit": 1, "order": "sequence,id"})
+                    if not sup_ids:
+                        raise OdooError(f"{codigo} no tiene proveedor/precio en Odoo")
+                    sup = self._kw("product.supplierinfo", "read",
+                                   [sup_ids, ["partner_id", "price", "min_qty", "delay"]])[0]
+                    moq = max(float(sup.get("min_qty") or 1.0), 1e-9)
+                    qty = math.ceil(neto / moq) * moq
+                    lead = int(sup.get("delay") or 0)
+                    filas.append({
+                        "etiqueta_mes": m["etiqueta"], "producto": sku,
+                        "unidades_producto_mes": round(unidades),
+                        "componente": codigo, "descripcion": comp["display_name"],
+                        "uom": linea.get(campo_uom, [None, ""])[1],
+                        "cantidad": round(qty, 6), "requerimiento_neto": round(neto, 6),
+                        "proveedor": sup["partner_id"][1],
+                        "precio_unitario_cop": float(sup.get("price") or 0),
+                        "subtotal_cop": round(qty * float(sup.get("price") or 0)),
+                        "lead_time_dias": lead,
+                        "fecha_pedido": (necesidad - timedelta(days=lead)).isoformat(),
+                        "fecha_necesidad": necesidad.isoformat(),
+                    })
+        return filas

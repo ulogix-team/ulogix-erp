@@ -257,6 +257,7 @@ _ALIAS_PARAMETROS = {
     "otros_fijos_proyecto_mes": "OTROS_FIJOS_PROYECTO_MES",
     "contingencia_capex": "CONTINGENCIA",
     "precio_p1_330ml": "precio_venta_cop_P1-CC350-RGB",
+    "precio_p1_350ml": "precio_venta_cop_P1-CC350-RGB",
     "precio_p2_pet15": "precio_venta_cop_P2-QT1500-PET",
     "precio_p3_garrafon": "precio_venta_cop_P3-GARR25L",
 }
@@ -410,12 +411,20 @@ def dep_mensual_total(forzar: bool = False, parametros: dict | None = None) -> f
 
 
 def _maestro(forzar: bool = False) -> pd.DataFrame:
-    """Unit economics por SKU: defaults de data/maestro_productos.csv,
-    sobreescritos si Sheets trae precio_venta_cop_<SKU> / costo_material_cop_
-    <SKU> en la hoja Parametros — mismo patron de override que el resto del
-    motor (Sheets manda, el CSV local es el fallback)."""
-    df = pd.read_csv(settings.DATA_DIR / "maestro_productos.csv").set_index("sku")
+    """Unit economics por SKU; Sheets es la fuente operativa viva.
+
+    El CSV solo existe como semilla/fallback cuando EXTERNAL_ONLY esta apagado.
+    """
     ov = _overrides_parametros(forzar)
+    if settings.EXTERNAL_ONLY:
+        from integrations.sheets_client import Contabilidad
+        df = Contabilidad().leer_maestro_productos().set_index("sku")
+        faltan = [s for s in SKUS if s not in df.index]
+        if faltan:
+            raise RuntimeError("EXTERNAL_ONLY=true: faltan SKU en Maestro_Productos "
+                               f"de Sheets: {', '.join(faltan)}")
+        return df
+    df = pd.read_csv(settings.DATA_DIR / "maestro_productos.csv").set_index("sku")
     for s in SKUS:
         if s not in df.index:
             continue
@@ -427,6 +436,12 @@ def _maestro(forzar: bool = False) -> pd.DataFrame:
 
 
 def _demanda_base() -> pd.DataFrame:
+    if settings.EXTERNAL_ONLY:
+        from integrations.sheets_client import Contabilidad
+        df = Contabilidad().leer_demanda()
+        if df.empty:
+            raise RuntimeError("EXTERNAL_ONLY=true: hoja Demanda vacia")
+        return df
     csv = settings.DATA_DIR / "pronostico_base_mensual.csv"
     if csv.exists():
         return pd.read_csv(csv)

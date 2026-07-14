@@ -184,7 +184,72 @@ def filas_hoja() -> list[list]:
          "paletizado, L3 no se pagaria sola en 10 anios al ritmo de volumen actual.",
          "", "", "", "", "", "", ""],
     ]
+    _aplicar_formulas(filas)
     return filas
+
+
+def _aplicar_formulas(filas: list[list]) -> None:
+    """Hace vivo el bloque cuantitativo sin tocar la narrativa documental."""
+    # SUPUESTOS: valores editables y vinculos a las fuentes vivas.
+    filas[11][1] = ('=INDEX(RRHH!$G:$G;MATCH("Operarios de linea (3 turnos)";'
+                    'RRHH!$A:$A;0))')
+    filas[12][1] = DOTACION_MANUAL["L1"][0]
+    filas[13][1] = DOTACION_MANUAL["L1"][1]
+    filas[14][1] = DOTACION_MANUAL["L3"][0]
+    filas[15][1] = AIU_TARIFA_ULOGIX
+    filas[16][1] = OPEX_MTTO_ULOGIX_PCT
+    filas[17][1] = PCT_COMISIONAMIENTO_COMERCIAL
+    filas[18][1] = OPEX_MTTO_COMERCIAL_PCT
+    filas[19][1] = "=Parametros!$B$5"
+    filas[19][2] = "=Parametros!$B$6"
+    filas[20] = ["CAPEX celdas ULogix USD* (GANTRY L1-L2 / ROBOT L3 / encajonado L1)",
+                 CAPEX_PALETIZADO_USD["GANTRY_L1_L2"],
+                 CAPEX_PALETIZADO_USD["ROBOT_L3"], ENCAJONADO_L1_USD, "", "", "", ""]
+
+    # Filas de resumen: 24-26 L1, 28-30 L2, 32-34 L3 (1-based).
+    config = {
+        "L1": (24, 25, 26, 37, "=($B$21*(50/100)+$D$21)*$B$20", "=SUM($B$43:$C$43)*$B$20*$C$20"),
+        "L2": (28, 29, 30, 38, "=$B$21*(50/100)*$B$20", "=SUM($B$44:$C$44)*$B$20*$C$20"),
+        "L3": (32, 33, 34, 39, "=$C$21*$B$20", "=SUM($B$45:$C$45)*$B$20*$C$20"),
+    }
+
+    def formula_vpn_tir(r: int) -> str:
+        flujos = ";".join([f"F{r}"] * HORIZONTE_ANIOS)
+        return (f'="VPN $"&TEXT(NPV(Parametros!$B$7;{flujos})-E{r};"#,##0")&'
+                f'" / TIR "&IFERROR(TEXT(RATE({HORIZONTE_ANIOS};F{r};-E{r};0;0;'
+                f'10/100);"0.0%");"n/a")')
+
+    for linea, (r_manual, r_u, r_c, r_tiempos, capex_u, capex_c) in config.items():
+        idx_m, idx_u, idx_c = r_manual - 1, r_u - 1, r_c - 1
+        if linea == "L1":
+            labor = f"=($B$13+$B$14)*Tiempos!$F${r_tiempos}*$B$12*12"
+        elif linea == "L2":
+            labor = f"=$B$13*Tiempos!$F${r_tiempos}*$B$12*12"
+        else:
+            labor = f"=$B$15*Tiempos!$F${r_tiempos}*$B$12*12"
+        filas[idx_m][5] = labor
+
+        filas[idx_u][2] = capex_u
+        filas[idx_u][3] = f"=C{r_u}*$B$16"
+        filas[idx_u][4] = f"=C{r_u}+D{r_u}"
+        filas[idx_u][5] = f"=F{r_manual}-C{r_u}*$B$17"
+        filas[idx_u][6] = f"=IF(F{r_u}<=0;\"n/a\";E{r_u}/F{r_u})"
+        filas[idx_u][7] = formula_vpn_tir(r_u)
+
+        filas[idx_c][2] = capex_c
+        filas[idx_c][3] = f"=C{r_c}*$B$18"
+        filas[idx_c][4] = f"=C{r_c}+D{r_c}"
+        filas[idx_c][5] = f"=F{r_manual}-C{r_c}*$B$19"
+        filas[idx_c][6] = f"=IF(F{r_c}<=0;\"n/a\";E{r_c}/F{r_c})"
+        filas[idx_c][7] = formula_vpn_tir(r_c)
+
+    # Totales 3 lineas.
+    for r, opcion_rows in ((36, [24, 28, 32]), (37, [25, 29, 33]), (38, [26, 30, 34])):
+        filas[r - 1][4] = "=SUM(" + ";".join(f"E{x}" for x in opcion_rows) + ")"
+        filas[r - 1][5] = "=SUM(" + ";".join(f"F{x}" for x in opcion_rows) + ")"
+        if r > 36:
+            filas[r - 1][6] = f"=IF(F{r}<=0;\"n/a\";E{r}/F{r})"
+            filas[r - 1][7] = formula_vpn_tir(r)
 
 
 def main() -> None:
@@ -199,7 +264,7 @@ def main() -> None:
     except Exception:  # noqa: BLE001
         ws = ss.add_worksheet("Analisis_Paletizado", rows=max(80, len(filas) + 10), cols=8)
     ws.clear()
-    ws.update(filas, "A1", value_input_option="RAW")
+    ws.update(filas, "A1", value_input_option="USER_ENTERED")
     print(f"Publicado Analisis_Paletizado: {len(filas)} filas")
 
     r = calcular()

@@ -10,36 +10,30 @@ import streamlit as st
 from app.ui import theme
 from app.ui.theme import COL, COLOR_SKU, NOMBRE_CORTO
 from config import settings
-from core.forecast import cargar_maestro
 from core.inventario import plan_compras
-from core.sensibilidad import tornado
-from integrations import state_store
-from integrations.sheets_client import Contabilidad, libro_local
+from integrations.sheets_client import Contabilidad
 
 theme.preparar_pagina("Finanzas", "💰")
 theme.encabezado("FASE FINANCIERA · SHEETS / EXCEL",
                  "Finanzas de produccion",
-                 "Margen plan (escenario activo) vs. real (produccion MQTT), "
-                 "sensibilidad tornado y sincronizacion contable.")
+                 "Margen plan (escenario activo) vs. real (produccion MQTT) "
+                 "y sincronizacion contable.")
 theme.banner_escenario()
 nombre_esc, dem = theme.demanda_activa()
-maestro = cargar_maestro()
+from core.finanzas_negocio import _maestro as _maestro_financiero  # noqa: E402
+maestro = _maestro_financiero().reset_index()
 
 cont = Contabilidad()
 destino = ("Google Sheets · " + settings.SHEETS_SPREADSHEET_ID[:18] + "…"
-           if cont.modo == "sheets" else f"Excel local · data/{settings.LEDGER_XLSX.name}")
+           if cont.modo == "sheets" else "fuente externa no disponible")
 st.caption(f"Backend contable: **{destino}** (configura `SHEETS_SPREADSHEET_ID` y la "
            "cuenta de servicio para pasar a Google Sheets; el codigo no cambia).")
 
 # ------------------------------------------------------------------ unit economics
 st.subheader("Unit economics (maestro de productos — datos fisicos y precio base)")
-st.caption("Esta tabla es el maestro fisico (`data/maestro_productos.csv`: EAN, "
-           "empaque, precio/costo base) que tambien alimenta Odoo/MRP. El "
-           "**caso de negocio** de mas abajo usa unit economics separadas, "
-           "gobernadas desde la hoja `Parametros` de Sheets (claves "
-           "`precio_venta_cop_<SKU>` / `costo_material_cop_<SKU>`) con este "
-           "mismo maestro como fallback — asi el escenario financiero se puede "
-           "ajustar sin tocar el maestro que ve Odoo.")
+st.caption("Precios y costos unitarios gobernados por la hoja `Parametros` de "
+           "Sheets (`precio_venta_cop_<SKU>` / `costo_material_cop_<SKU>`). "
+           "Con `EXTERNAL_ONLY=true` no se usa el CSV local como fallback.")
 ue = maestro[["sku", "nombre", "precio_venta_cop", "costo_material_cop"]].copy()
 ue["margen_unit_cop"] = ue["precio_venta_cop"] - ue["costo_material_cop"]
 ue["margen_pct"] = (100 * ue["margen_unit_cop"] / ue["precio_venta_cop"]).round(1)
@@ -77,15 +71,24 @@ c3.metric("Margen bruto plan", f"${plan_fin['margen_cop'].sum():,.0f}")
 # ------------------------------------------------------------------ real desde MQTT
 st.divider()
 st.subheader("Real acumulado (produccion reportada por MQTT)")
-eventos = state_store.ultimos_eventos(100000)
+ev_df = cont.leer_libro_produccion()
+if "unidades" in ev_df.columns and "qty" not in ev_df.columns:
+    ev_df = ev_df.rename(columns={"unidades": "qty"})
+eventos = ev_df.to_dict("records") if not ev_df.empty else []
 if eventos:
-    ev_df = pd.DataFrame(eventos)
+    for col in ["qty", "precio_unit_cop", "costo_unit_cop", "ingreso_cop",
+                "costo_cop", "margen_cop"]:
+        if col in ev_df:
+            ev_df[col] = pd.to_numeric(ev_df[col], errors="coerce").fillna(0)
     m = maestro.set_index("sku")
-    ev_df["ingreso_cop"] = ev_df.apply(lambda r: r["qty"] * m.loc[r["sku"], "precio_venta_cop"]
-                                       if r["sku"] in m.index else 0, axis=1)
-    ev_df["costo_cop"] = ev_df.apply(lambda r: r["qty"] * m.loc[r["sku"], "costo_material_cop"]
-                                     if r["sku"] in m.index else 0, axis=1)
-    ev_df["margen_cop"] = ev_df["ingreso_cop"] - ev_df["costo_cop"]
+    if "ingreso_cop" not in ev_df:
+        ev_df["ingreso_cop"] = ev_df.apply(lambda r: r["qty"] * m.loc[r["sku"], "precio_venta_cop"]
+                                           if r["sku"] in m.index else 0, axis=1)
+    if "costo_cop" not in ev_df:
+        ev_df["costo_cop"] = ev_df.apply(lambda r: r["qty"] * m.loc[r["sku"], "costo_material_cop"]
+                                         if r["sku"] in m.index else 0, axis=1)
+    if "margen_cop" not in ev_df:
+        ev_df["margen_cop"] = ev_df["ingreso_cop"] - ev_df["costo_cop"]
     c1, c2, c3 = st.columns(3)
     c1.metric("Unidades reportadas", f"{ev_df['qty'].sum():,.0f}")
     c2.metric("Ingreso real", f"${ev_df['ingreso_cop'].sum():,.0f}")
@@ -105,8 +108,8 @@ c1, c2, c3 = st.columns(3)
 with c1:
     if st.button("📒 Sincronizar LibroProduccion", type="primary",
                  disabled=not eventos, width="stretch"):
-        destino, n = cont.sincronizar_libro_completo(eventos, maestro)
-        st.success(f"{n} asientos escritos en {destino} (hoja LibroProduccion).")
+        st.info("LibroProduccion ya es la fuente externa activa; no requiere "
+                "reconstruccion desde SQLite.")
 with c2:
     if st.button("📅 Publicar ResumenMensual (plan)", width="stretch"):
         destino = cont.publicar_resumen_mensual(
@@ -116,36 +119,6 @@ with c3:
     if st.button("🧾 Publicar PlanCompras (MRP)", width="stretch"):
         destino = cont.publicar_plan_compras(plan_compras(dem, cobertura_meses=3))
         st.success(f"Plan de compras publicado en {destino}.")
-
-if settings.LEDGER_XLSX.exists():
-    with st.expander("Libro local (respaldo Excel)"):
-        st.dataframe(libro_local(), width="stretch", hide_index=True)
-
-# ------------------------------------------------------------------ tornado
-st.divider()
-st.subheader("Sensibilidad del margen bruto anual (tornado)")
-
-
-@st.cache_data(show_spinner="Perturbando parametros...")
-def _tornado(nombre_escenario: str, dem_df: pd.DataFrame):
-    return tornado(dem_df)
-
-
-t = _tornado(nombre_esc, dem)
-base = t.attrs.get("margen_base_cop", 0)
-fig = go.Figure()
-orden = t.sort_values("amplitud_pct")
-fig.add_trace(go.Bar(y=orden["parametro"], x=orden["delta_low_pct"], orientation="h",
-                     name="Cota baja", marker_color="#FFB454"))
-fig.add_trace(go.Bar(y=orden["parametro"], x=orden["delta_high_pct"], orientation="h",
-                     name="Cota alta", marker_color=COL["acento"]))
-fig.update_layout(barmode="overlay", xaxis_title="Δ margen bruto anual (%)")
-st.plotly_chart(theme.plotly_layout(fig, f"Margen base: ${base:,.0f} COP"),
-                width="stretch")
-st.dataframe(t, width="stretch", hide_index=True)
-st.caption("Lectura: el ranking indica donde invertir en mejor informacion — p. ej., "
-           "cerrar la inconsistencia TEEP/utilizacion con horas programadas reales "
-           "pesa mas que refinar precios de empaques menores.")
 
 # ================================================================ caso de negocio
 st.divider()
@@ -238,9 +211,8 @@ if st.button("📗 Sincronizar demanda al libro (Base -> Demanda · activo -> De
     cli = Contabilidad()
     d1 = cli.publicar_demanda(theme.datos_pronostico()["mensual"], "Base")
     d2 = cli.publicar_demanda_escenario(dem_activa, nombre_activo)
-    from integrations import state_store
-    pol = state_store.politicas_inventario_actuales()
-    d3 = cli.publicar_inventarios(pol) if pol else "sin politicas aun"
+    pol = cli.leer_inventarios()
+    d3 = "Inventarios ya gobernado por Sheets" if not pol.empty else "sin politicas aun"
     st.success(f"Demanda Base -> {d1} · escenario «{nombre_activo}» -> {d2} · "
                f"inventarios -> {d3}. Las hojas ER/Flujo_Caja/FinancieroEscenario/"
                "Reportes del libro recalculan solas.")
@@ -273,7 +245,7 @@ st.caption("Justificación, componente por componente, de lo que ULogix cobra po
            "Utilidad (banda de mercado 25–30% — no es una tarifa fijada por ley: desde "
            "la desregulación de honorarios profesionales, COPNIA no fija tarifas "
            "mínimas, es de negociación contractual). La mano de obra propia usa el "
-           "costo real de nómina de `data/empleados.csv` (RRHH); los rubros de "
+           "costo real de nómina de la hoja `RRHH`; los rubros de "
            "terceros/OEM son supuestos de mercado documentados, a validar con "
            "cotización real antes de contratar. Ver `tools/publicar_apu_ingenieria.py`.")
 
@@ -321,6 +293,9 @@ else:
 
     with st.expander("Detalle por componente (mano de obra, terceros/OEM, materiales, logística)"):
         df_detalle = pd.DataFrame(apu["detalle"])
+        for columna in ("cantidad", "valor_unitario_cop", "subtotal_cop"):
+            if columna in df_detalle:
+                df_detalle[columna] = pd.to_numeric(df_detalle[columna], errors="coerce")
         st.dataframe(df_detalle, width="stretch", hide_index=True,
                     column_config={
                         "valor_unitario_cop": st.column_config.NumberColumn(format="$%,.0f"),

@@ -12,12 +12,12 @@ from app.ui import theme
 from app.ui.theme import COL
 from core import rrhh
 from integrations import rrhh_client
+from integrations.odoo_client import OdooClient
 
 theme.preparar_pagina("RRHH", "🧑‍🤝‍🧑")
 theme.encabezado("RRHH · DOTACION Y NOMINA",
                  "Roster individual + resumen por rol, centralizados en una hoja",
-                 "Todo vive en la hoja **RRHH** del libro (o en "
-                 "`data/empleados.csv` si Sheets no esta configurado): el roster "
+                 "Todo vive en la hoja **RRHH** del libro: el roster "
                  "individual, el resumen agregado por rol (el que alimenta al "
                  "motor financiero via `NOMINA_OPERACION_MES` / "
                  "`NOMINA_IMPLEMENTACION_MES` en la hoja `Parametros`), la tabla "
@@ -31,12 +31,39 @@ if st.button("🔄 Refrescar desde Sheets"):
 
 @st.cache_data(ttl=60, show_spinner="Leyendo el roster...")
 def _cargar():
-    return rrhh_client.leer_empleados()
+    return rrhh_client.leer_empleados(permitir_fallback=False)
 
-
-df, origen = _cargar()
-badge = "🟢 Google Sheets" if origen == "sheets" else "🟡 CSV local (`data/empleados.csv`)"
+try:
+    df, origen = _cargar()
+except Exception as exc:  # noqa: BLE001
+    st.error(f"RRHH requiere Google Sheets y no usará datos locales: {exc}")
+    st.stop()
+badge = "🟢 Google Sheets (fuente de verdad)"
 st.caption(f"Fuente del roster: **{badge}** · {len(df)} personas")
+
+st.subheader("Estado de sincronización con Odoo")
+try:
+    odoo = OdooClient()
+    estado_odoo = odoo.estado_nomina()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Empleados Odoo", estado_odoo["empleados"],
+              f"Sheets: {len(df)}")
+    c2.metric("Versiones laborales", estado_odoo["versiones"])
+    c3.metric("Estructuras salariales", estado_odoo["estructuras"])
+    c4.metric("Recibos de nómina", estado_odoo["recibos"])
+    if estado_odoo["estructuras"] == 0:
+        st.info("El maestro laboral se sincroniza con Odoo, pero no se generan "
+                "recibos hasta configurar y validar una estructura salarial "
+                "colombiana en Nómina. No se inventan reglas contables.")
+    if st.button("🔄 Sincronizar roster con Odoo", type="primary"):
+        resultado = odoo.sincronizar_empleados(df.to_dict("records"))
+        st.success(f"Odoo actualizado: {resultado['creados']} creados, "
+                   f"{resultado['actualizados']} actualizados y "
+                   f"{resultado['desactivados']} desactivados.")
+        st.cache_data.clear()
+        st.rerun()
+except Exception as exc:  # noqa: BLE001
+    st.warning(f"No se pudo consultar/sincronizar RRHH con Odoo: {exc}")
 
 problemas = rrhh.validar_roster(df)
 if problemas:
@@ -162,11 +189,17 @@ with st.form("nuevo_empleado"):
             st.error(f"Ya existe un empleado con cédula {cedula}.")
         else:
             destino = rrhh_client.agregar_empleado(
+                permitir_fallback=False,
                 cedula=cedula, nombre=nombre, cargo=cargo, rol_personal=rol_personal,
                 linea=linea, turno=turno, fase=fase,
                 fecha_ingreso=fecha_ingreso.isoformat(), estado="activo",
                 salario_mensual_cop=salario, telefono=telefono, email=email)
-            st.success(f"{nombre} agregado(a) al roster ({destino}).")
+            df_nuevo, _ = rrhh_client.leer_empleados(permitir_fallback=False)
+            resultado_odoo = OdooClient().sincronizar_empleados(
+                df_nuevo.to_dict("records"))
+            st.success(f"{nombre} agregado(a) al roster ({destino}) y sincronizado "
+                       f"con Odoo ({resultado_odoo['creados']} alta(s), "
+                       f"{resultado_odoo['actualizados']} actualización(es)).")
             st.cache_data.clear()
             st.rerun()
 

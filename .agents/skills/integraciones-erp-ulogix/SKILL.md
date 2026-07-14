@@ -76,9 +76,10 @@ un `sale.order`, lo confirma, lo entrega (`entregar_orden_venta` — misma
 lógica de `quantity_done`/`quantity`+`picked` que `recibir_orden`) y lo
 factura (`facturar_orden_venta` — `sale.order._create_invoices` con fallback
 a `action_invoice_create`, luego `account.move.action_post`). La página
-*Ventas y Facturación* toma las MO terminadas directamente de Odoo y las
-reparte entre clientes activos de Odoo según `x_ulogix_participacion`. La
-idempotencia se comprueba por `client_order_ref`; SQLite no gobierna ventas.
+*Ventas y Facturación* toma los lotes cuya MO quedó `recibida_odoo` y los
+reparte entre los clientes de `data/clientes.csv` (columna `participacion`);
+registra cada `sale.order` en `state_store.venta_tracking` (vinculado por
+`mo_name`) para no vender el mismo lote dos veces.
 
 Del lado de compras, `crear_orden_compra(..., facturar=True)` genera además
 la **factura de proveedor** (`facturar_orden_compra` — `purchase.order.
@@ -131,7 +132,7 @@ misma sesión** de openpyxl (un libro sin hojas visibles no se puede guardar).
 `kpi_uns`, `inventario_stock`, `movimientos_stock`, `log_acciones`.
 `inventario_stock` es el saldo ACTUAL de producto terminado/materia prima
 (se mueve con cada avance real de producción, no solo al cerrar una orden —
-ver decisión #16 de CLAUDE.md); `movimientos_stock` es su bitácora. Docker
+ver decisión #16 de AGENTS.md); `movimientos_stock` es su bitácora. Docker
 monta la base como volumen para que sobreviva reinicios. Navegable en la
 página 8 del dashboard.
 
@@ -148,7 +149,7 @@ cuando falla la entrega o la factura de una orden de venta/compra.
 2026-07: `Personal` (agregado) + `Empleados` (detalle) se consolidaron en
 UNA hoja `RRHH`, con 4 secciones marcadas (RESUMEN POR ROL / ROSTER
 INDIVIDUAL / TASAS DE CARGA PRESTACIONAL / RECONCILIACIÓN) — ver decisión
-#17 de `CLAUDE.md`. `integrations/rrhh_client.py` — conexión propia a
+#17 de `AGENTS.md`. `integrations/rrhh_client.py` — conexión propia a
 gspread (no reusa `sheets_client.Contabilidad`), lee cada sección por
 nombre (mismo patrón que `leer_capex()`), y **siempre reconstruye la hoja
 completa al escribir** (el resumen se deriva del roster, no tiene sentido

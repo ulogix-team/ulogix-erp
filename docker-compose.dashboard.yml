@@ -13,9 +13,11 @@ services:
       - OMP_NUM_THREADS=1
       - MKL_NUM_THREADS=1
       - NUMEXPR_NUM_THREADS=1
+      - GOOGLE_SA_JSON=/run/secrets/google_service_account.json
     volumes:
       - ./data:/app/data              # datos + contabilidad local persistentes
       - ./middleware:/app/middleware  # state.db compartido con el middleware
+      - ./config/google_service_account.json:/run/secrets/google_service_account.json:ro
     restart: unless-stopped
 
   middleware:
@@ -27,7 +29,9 @@ services:
       - OMP_NUM_THREADS=1
       - MKL_NUM_THREADS=1
       - NUMEXPR_NUM_THREADS=1
+      - GOOGLE_SA_JSON=/run/secrets/google_service_account.json
     volumes:
       - ./data:/app/data
       - ./middleware:/app/middleware
+      - ./config/google_service_account.json:/run/secrets/google_service_account.json:ro
     restart: unless-stopped

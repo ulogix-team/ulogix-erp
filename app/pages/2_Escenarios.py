@@ -81,15 +81,15 @@ c1, c2 = st.columns(2)
 with c1:
     if st.button(f"✅ Activar «{esc.nombre}» para toda la suite", type="primary",
                  width="stretch"):
-        st.session_state["escenario_activo"] = esc
-        from integrations import state_store
-        state_store.guardar_pronostico(df_esc, esc.nombre)  # demanda del escenario -> ERP
-        try:  # y al libro financiero (hoja DemandaEscenario -> FinancieroEscenario)
+        try:  # fuente viva: hoja DemandaEscenario -> FinancieroEscenario
             from integrations.sheets_client import Contabilidad
             destino = Contabilidad().publicar_demanda_escenario(df_esc, esc.nombre)
+            st.session_state["escenario_activo"] = esc
             st.toast(f"Demanda del escenario publicada al libro ({destino})")
+            from integrations import state_store
+            state_store.guardar_pronostico(df_esc, esc.nombre)  # cache/auditoria local
         except Exception as _e:  # noqa: BLE001
-            st.toast(f"Libro no actualizado: {_e}")
+            st.error(f"No se activo externamente el escenario: {_e}")
         st.success(f"Escenario activo: {esc.nombre}. Inventario, ordenes en Odoo y "
                    "finanzas usan ahora esta demanda.")
 with c2:

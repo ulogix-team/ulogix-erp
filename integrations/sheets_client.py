@@ -19,6 +19,7 @@ Hojas gestionadas:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import sys
 
@@ -55,6 +56,13 @@ class Contabilidad:
     def __init__(self) -> None:
         self.modo = "sheets" if (settings.SHEETS_ENABLED and not settings.DRY_RUN_FORZADO) else "excel"
         self._ss = None
+        if settings.EXTERNAL_ONLY and self.modo != "sheets":
+            raise RuntimeError("EXTERNAL_ONLY=true: Google Sheets es obligatorio")
+
+    @staticmethod
+    def _sin_fallback(error: Exception) -> None:
+        if settings.EXTERNAL_ONLY:
+            raise RuntimeError(f"Google Sheets no disponible en modo EXTERNAL_ONLY: {error}") from error
 
     # ------------------------------------------------------------- backends
     def _spreadsheet(self):
@@ -74,6 +82,134 @@ class Contabilidad:
         if not ws.row_values(1):
             ws.append_row(encabezados)
         return ws
+
+    def leer_hoja(self, nombre: str, rango: str | None = None,
+                   encabezado: int = 1) -> pd.DataFrame:
+        """Lee una tabla de Sheets como fuente externa de verdad.
+
+        `encabezado` es 1-based dentro del rango devuelto. En modo estricto
+        una hoja ausente o vacia es un error visible, nunca un fallback local.
+        """
+        try:
+            ws = self._spreadsheet().worksheet(nombre)
+            filas = ws.get(rango, value_render_option="UNFORMATTED_VALUE") \
+                if rango else ws.get(value_render_option="UNFORMATTED_VALUE")
+        except Exception as e:  # noqa: BLE001
+            self._sin_fallback(e)
+            return pd.DataFrame()
+        if len(filas) < encabezado:
+            if settings.EXTERNAL_ONLY:
+                raise ValueError(f"Hoja {nombre!r} vacia o sin encabezado")
+            return pd.DataFrame()
+        columnas = [str(c).strip() for c in filas[encabezado - 1]]
+        ancho = len(columnas)
+        datos = [(list(f) + [""] * ancho)[:ancho] for f in filas[encabezado:]
+                 if any(str(c).strip() for c in f)]
+        return pd.DataFrame(datos, columns=columnas)
+
+    def leer_demanda(self, escenario: bool = False) -> pd.DataFrame:
+        hoja = "DemandaEscenario" if escenario else "Demanda"
+        from core.forecast import normalizar_demanda_mensual
+        return normalizar_demanda_mensual(self.leer_hoja(hoja, "A4:F16"))
+
+    def leer_inventarios(self) -> pd.DataFrame:
+        return self.leer_hoja("Inventarios", "A4:I8")
+
+    def leer_plan_compras(self) -> pd.DataFrame:
+        return self.leer_hoja("PlanCompras", "A4:K")
+
+    def leer_libro_produccion(self) -> pd.DataFrame:
+        return self.leer_hoja("LibroProduccion")
+
+    def leer_resumen_mensual(self) -> pd.DataFrame:
+        return self.leer_hoja("ResumenMensual", "A4:F")
+
+    def leer_kpis_uns(self) -> pd.DataFrame:
+        return self.leer_hoja("KPIs_UNS", "A4:G")
+
+    def leer_costos_unitarios(self) -> dict[str, float]:
+        """Costos variables por SKU calculados en la hoja ``Costos_Lote``.
+
+        Se localizan por la etiqueta ``COSTO UNITARIO`` dentro de cada bloque,
+        no por una coordenada fija, para soportar que el usuario agregue rubros.
+        """
+        try:
+            filas = self._spreadsheet().worksheet("Costos_Lote").get(
+                value_render_option="UNFORMATTED_VALUE")
+        except Exception as e:  # noqa: BLE001
+            self._sin_fallback(e)
+            return {}
+        skus = ["P1-CC350-RGB", "P2-QT1500-PET", "P3-GARR25L"]
+        out: dict[str, float] = {}
+        bloque = -1
+        for fila in filas:
+            etiqueta = str(fila[0]).strip() if fila else ""
+            if etiqueta.startswith("P1 ·"):
+                bloque = 0
+            elif etiqueta.startswith("P2 ·"):
+                bloque = 1
+            elif etiqueta.startswith("P3 ·"):
+                bloque = 2
+            elif etiqueta.startswith("COSTO UNITARIO") and bloque >= 0 and len(fila) > 1:
+                out[skus[bloque]] = float(fila[1])
+        if settings.EXTERNAL_ONLY and len(out) != len(skus):
+            raise ValueError("Costos_Lote no contiene los tres COSTO UNITARIO")
+        return out
+
+    def leer_maestro_productos(self) -> pd.DataFrame:
+        """Maestro fisico y comercial vivo; reemplaza maestro_productos.csv."""
+        df = self.leer_hoja("Maestro_Productos")
+        requeridas = {"sku", "nombre", "linea", "ean13", "litros_por_unidad",
+                      "unidades_por_caja", "cajas_por_pallet",
+                      "precio_venta_cop", "costo_material_cop"}
+        faltan = requeridas - set(df.columns)
+        if faltan:
+            raise ValueError(f"Maestro_Productos sin columnas: {sorted(faltan)}")
+        numericas = ["litros_por_unidad", "unidades_por_caja", "cajas_por_pallet",
+                     "precio_venta_cop", "costo_material_cop",
+                     "participacion_categoria"]
+        for c in numericas:
+            if c in df:
+                df[c] = pd.to_numeric(df[c], errors="raise")
+        df["ean13"] = df["ean13"].astype(str).str.replace(r"\.0$", "", regex=True)
+        return df
+
+    def leer_clientes(self) -> pd.DataFrame:
+        df = self.leer_hoja("Clientes")
+        requeridas = {"nombre", "ciudad", "canal", "participacion"}
+        faltan = requeridas - set(df.columns)
+        if faltan:
+            raise ValueError(f"Clientes sin columnas: {sorted(faltan)}")
+        df["participacion"] = pd.to_numeric(df["participacion"], errors="raise")
+        return df
+
+    def leer_dataset_pronostico(self, hoja: str) -> pd.DataFrame:
+        permitidas = {"Forecast_Historico_Mensual", "Forecast_Historico_Trimestral",
+                      "Forecast_Perfil_Formato", "Forecast_KOF_Trimestral",
+                      "Forecast_Pronostico_Mensual", "Forecast_Pronostico_Trimestral",
+                      "Forecast_Metricas", "Forecast_QA"}
+        if hoja not in permitidas:
+            raise ValueError(f"dataset de pronostico no permitido: {hoja}")
+        df = self.leer_hoja(hoja)
+        if hoja == "Forecast_Pronostico_Mensual":
+            from core.forecast import normalizar_demanda_mensual
+            df = normalizar_demanda_mensual(df)
+        return df
+
+    def leer_config_pronostico(self, clave: str) -> dict:
+        df = self.leer_hoja("Forecast_Configuracion")
+        if not {"clave", "json"}.issubset(df.columns):
+            raise ValueError("Forecast_Configuracion requiere columnas clave/json")
+        filas = df[df["clave"].astype(str) == clave]
+        if filas.empty:
+            raise KeyError(f"configuracion de pronostico ausente: {clave}")
+        return json.loads(str(filas.iloc[0]["json"]))
+
+    def publicar_tabla_externa(self, hoja: str, df: pd.DataFrame) -> str:
+        """Reemplaza una tabla maestra externa durante migracion controlada."""
+        return self._escribir(hoja, list(df.columns),
+                              df.fillna("").astype(object).values.tolist(),
+                              reemplazar=True)
 
     def _excel_append(self, hoja: str, encabezados: list[str], filas: list[list]) -> None:
         from openpyxl import Workbook, load_workbook
@@ -104,6 +240,7 @@ class Contabilidad:
                 return "sheets"
             except Exception as e:  # noqa: BLE001 — degradar a Excel local
                 state_store.log("sheets", "ERROR -> fallback excel", str(e))
+                self._sin_fallback(e)
                 self.modo = "excel"
         if reemplazar and settings.LEDGER_XLSX.exists():
             # borrar y recrear la hoja EN LA MISMA sesion: el libro nunca queda
@@ -220,6 +357,7 @@ class Contabilidad:
                 return "sheets"
             except Exception as e:  # noqa: BLE001
                 state_store.log("sheets", "ERROR -> fallback excel", str(e))
+                self._sin_fallback(e)
                 self.modo = "excel"
         from openpyxl import Workbook, load_workbook
         path = settings.LEDGER_XLSX
@@ -290,7 +428,8 @@ class Contabilidad:
                 filas = ws.get_all_values()
             else:
                 raise RuntimeError("modo excel")
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            self._sin_fallback(e)
             from openpyxl import load_workbook
             if not settings.LEDGER_XLSX.exists():
                 return {}
@@ -342,7 +481,8 @@ class Contabilidad:
                 filas = ws.get_all_values()
             else:
                 raise RuntimeError("modo excel")
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            self._sin_fallback(e)
             from openpyxl import load_workbook
             if not settings.LEDGER_XLSX.exists():
                 return []
@@ -393,7 +533,8 @@ class Contabilidad:
                 filas = ws.get_all_values()
             else:
                 raise RuntimeError("modo excel")
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            self._sin_fallback(e)
             from openpyxl import load_workbook
             if not settings.LEDGER_XLSX.exists():
                 return {}
@@ -420,10 +561,10 @@ class Contabilidad:
         """Lee la hoja 'APU_Ingenieria' (Analisis de Precios Unitarios de los
         costos de ingenieria que cobra ULogix: ingenieria de detalle/FAT/SAT/
         PMO, instalacion/EPC, capacitacion/gestion del cambio — ver
-        `tools/publicar_apu_ingenieria.py`). Es solo lectura/exhibicion: no
-        alimenta ningun calculo de `core.finanzas_negocio` (los montos ya
-        estan en `CAPEX`, hoja `Servicios`; esta hoja documenta cómo se
-        componen). Devuelve `{'resumen': [...], 'detalle': [...]}` (listas de
+        `tools/publicar_apu_ingenieria.py`). El motor Python no la consume
+        directamente: el publicador enlaza sus totales con el costo unitario
+        de las 3 filas `Servicios` de `CAPEX`, y el motor lee luego `CAPEX`.
+        Devuelve `{'resumen': [...], 'detalle': [...]}` (listas de
         dict), vacias si la hoja no existe o no tiene el formato esperado —
         la página *Finanzas* oculta la sección en ese caso, no revienta."""
         try:
@@ -432,7 +573,8 @@ class Contabilidad:
                 filas = ws.get_all_values()
             else:
                 raise RuntimeError("modo excel")
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            self._sin_fallback(e)
             from openpyxl import load_workbook
             if not settings.LEDGER_XLSX.exists():
                 return {"resumen": [], "detalle": []}

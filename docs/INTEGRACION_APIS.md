@@ -40,11 +40,12 @@ Sheets** de la página Finanzas para forzarlo al instante):
 | Inventario | `Inventarios` (política s,Q) | ERP → Sheets | `publicar_inventarios()` — al simular en la página Inventario | **fijo A4:I8** |
 | Compras | `PlanCompras` | ERP → Sheets | `publicar_plan_compras()` | reemplazo |
 | Producción | `LibroProduccion` / `ResumenMensual` / `KPIs_UNS` | ERP → Sheets | middleware/sync | append/reemplazo |
+| Maestro | `Maestro_Productos` (SKU, atributos físicos, empaque, EAN, precio y costo base) | **Sheets → ERP** | `leer_maestro_productos()` | tabla completa por SKU |
 | Financiero | `Parametros` (pares clave-valor: TRM, TMAR, nómina, otros fijos, vidas útiles, unit economics por SKU...) | **Sheets → ERP** | `leer_parametros()` | pares clave-valor, cualquier fila |
 | Financiero | `CAPEX` (tabla: sección, línea, activo, cantidad, moneda, costo_unitario, vida_años, categoría_dep) | **Sheets → ERP** | `leer_capex()` | tabla, encabezado reconocido por nombre de columna |
 | Financiero | `Licencias` (`CAPEX software capitalizable`, `OPEX mensual licencias` — última celda no vacía de la fila) | **Sheets → ERP** | `leer_licencias()` | filas etiquetadas, sin columna fija |
 | RRHH | `RRHH` (roster + resumen por rol + tasas, consolidada — ver `integrations/rrhh_client.py`) | ERP → Sheets *(alta)* / **Sheets → ERP** *(lectura)* | `leer_empleados()` / `publicar_empleados()` / `agregar_empleado()` | reconstrucción completa (el resumen se deriva del roster), sin fórmulas dependientes |
-| Financiero | `APU_Ingenieria` (costos de ingeniería que cobra ULogix, justificados por AIU) | ERP → Sheets | `tools/publicar_apu_ingenieria.py` (escribe) / `leer_apu_ingenieria()` (lee, solo exhibición) | reemplazo, sin fórmulas dependientes |
+| Financiero | `APU_Ingenieria` (costos de ingeniería que cobra ULogix, justificados por AIU) | ERP → Sheets | `tools/publicar_apu_ingenieria.py` (escribe) / `leer_apu_ingenieria()` (lee, solo exhibición) | reemplazo; tarifa propia enlazada por fórmula a `RRHH` |
 | Financiero | `Analisis_Paletizado` (caso de inversión paralelo: paletizado+encajonado antes/ULogix/comercial) | ERP → Sheets | `tools/publicar_analisis_paletizado.py` — solo exhibición, no alimenta `CAPEX_FILAS` ni el caso de negocio principal | reemplazo, sin fórmulas dependientes |
 
 **Formato numérico del libro real: colombiano, no inglés.** Punto = separador
@@ -78,16 +79,16 @@ distinguir mayúsculas/minúsculas):
 | `otros_fijos_proyecto_mes` | `OTROS_FIJOS_PROYECTO_MES` |
 | `contingencia_capex` | `CONTINGENCIA` |
 | `fase_capex_1` .. `fase_capex_4` (4 filas) | `FASES_CAPEX` (se combinan) |
-| `precio_p1_330ml` / `precio_p2_pet15` / `precio_p3_garrafon` | `precio_venta_cop_<SKU>` |
+| `precio_p1_330ml` o `precio_p1_350ml` / `precio_p2_pet15` / `precio_p3_garrafon` | `precio_venta_cop_<SKU>` |
 
 `VIDA_equipos`/`VIDA_automatizacion`/`VIDA_servicios`/`VIDA_intangibles`/
 `VIDA_software` y `costo_material_cop_<SKU>` **no tienen hoy una fila
 equivalente en el libro real** — quedan solo con el default local hasta que
 se agreguen (con esos mismos nombres canónicos, no hace falta alias). Esta
-hoja **no** gobierna el maestro físico que usa Odoo/MRP
-(`data/maestro_productos.csv` vía `core/forecast.cargar_maestro()`) — solo
-las unit economics del caso de negocio de `core/finanzas_negocio.py`; ver
-decisión de diseño #3 en `CLAUDE.md`.
+Los atributos físicos/comerciales se leen de `Maestro_Productos` mediante
+`core.forecast.cargar_maestro()` y `core.finanzas_negocio._maestro()` en modo
+operativo. `data/maestro_productos.csv` es únicamente semilla/fallback cuando
+`EXTERNAL_ONLY=false`; nunca es la fuente viva del despliegue.
 
 **`crecimiento_demanda` ya no se lee** (decisión #20, 2026-07): el motor
 Python eliminó por completo el parámetro `CRECIMIENTO_DEMANDA_ANUAL` — la
@@ -135,9 +136,14 @@ porque las hojas financieras (`ER_Proyecto`, `Flujo_Caja`, `Balance`,
 fórmulas: la app escribe posicionalmente sin romperlas — eso **no cambió**.
 **`Tiempos` es DOCUMENTAL** (referencia de ingeniería del estudio corregido,
 consolidada 2026-07 — incluye OEE/TEEP, `OEE_TEEP` ya no existe como hoja
-aparte, ver decisión #17 — no conectada al ERP en vivo) y **el ERP no
-gestiona OEE/TEEP**: esos KPIs solo llegan por MQTT según el UNS a
-`KPIs_UNS`.
+aparte, ver decisión #17 — no conectada al ERP en vivo). Su bloque de
+capacidad separa explícitamente **ANTES** (equipos, tiempos, OEE y turnos
+medidos) de **DESPUÉS** (equipos incluidos en CAPEX, celdas robotizadas, OEE
+objetivo y turnos de diseño). También muestra “después con los mismos turnos”
+para no atribuir al equipo el aumento que realmente proviene del tercer turno.
+El MLT posterior es una proyección hasta validarlo en SAT/comisionamiento.
+El ERP **no gestiona los KPI OEE/TEEP vivos**: esos valores llegan solo por
+MQTT según el UNS a `kpi_uns` y luego se archivan en `KPIs_UNS`.
 Si el ID no está configurado, todo cae a un Excel local
 (`data/contabilidad_local.xlsx`) con la misma estructura: cero pérdida — y el
 motor financiero da exactamente los mismos números que con sus constantes
@@ -405,3 +411,28 @@ fase, fecha_ingreso, estado, salario_mensual_cop, telefono, email` —
 prestacional), no el salario base; el desglose vive en la sección de tasas.
 Fallback
 sin Sheets: `data/empleados.csv` (mismo esquema).
+
+### Réplica laboral a Odoo 19
+
+`OdooClient.sincronizar_empleados()` toma el roster vivo de `RRHH` y hace
+upsert idempotente por cédula en `hr.employee`; Odoo 19 materializa la relación
+laboral en `hr.version` (no `hr.contract`). Crea/reusa departamentos y cargos,
+calcula el salario base implícito desde el costo empleador y conserva la
+trazabilidad Ulogix en campos `x_ulogix_*`. Solo desactiva empleados previamente
+marcados como administrados por Ulogix que ya no estén en Sheets. La página
+*RRHH* y `tools/sincronizar_rrhh_odoo.py` exponen esta sincronización.
+
+La instalación tiene `hr_payroll`, pero una estructura salarial colombiana
+debe configurarse y validarse legalmente antes de generar `hr.payslip`; el ERP
+no inventa reglas salariales. `OdooClient.estado_nomina()` muestra empleados,
+versiones, estructuras y recibos para que esta condición sea visible.
+
+## 7 · QA de integraciones reales
+
+`tools/qa_erp_funcional.py --flujo-completo` comprueba Odoo, Sheets y MQTT y
+crea/reutiliza referencias `QA-FULL/*`: compra, recepción, factura de proveedor,
+MO con BOM, venta, entrega y factura de cliente. En Odoo 19 la facturación de
+venta usa el asistente público `sale.advance.payment.inv`. Como XML-RPC puede
+reportar un Fault de serialización después de ejecutar el asistente, el cliente
+relee `account.move` por `invoice_origin`; esa relectura determina el éxito.
+Antes de contabilizar, toda factura borrador recibe `invoice_date`.

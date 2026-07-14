@@ -37,7 +37,7 @@ INVENTARIO EN VIVO (ERP local + Odoo), no solo al cerrar la orden:
 - ERP local: cada avance real de `AvailableQuantity`/`GoodCount` entra de
   inmediato al inventario de `state_store` (`_aplicar_produccion_a_stock`,
   via `actualizar_disponible`/`acumular_produccion`): sube producto
-  terminado, baja materia prima segun `data/bom.csv`. Pagina *Inventario*,
+  terminado y Odoo baja materia prima según su BOM nativa. Página *Inventario*,
   seccion "Stock actual".
 - Odoo: cada `INTERVALO_SYNC_ODOO` s, `sincronizar_parciales_odoo()` postea
   en Odoo (via el mecanismo nativo de backorder de `mrp.production`) el
@@ -63,6 +63,7 @@ from __future__ import annotations
 import json
 import signal
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
@@ -70,24 +71,66 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from config import settings
 from integrations import state_store, uns
 from integrations.odoo_client import OdooClient
+from integrations.sheets_client import Contabilidad
 
 INTERVALO_REPUBLICAR = 15.0  # s -- reafirma la orden activa (autocuracion contra ruido)
 INTERVALO_SYNC_ODOO = 60.0   # s -- postea a Odoo (backorder parcial) el avance acumulado
 
 
 def _mapa_linea_sku() -> dict[str, str]:
-    with open(settings.DATA_DIR / "parametros_planta.json", encoding="utf-8") as f:
-        params = json.load(f)
+    # El loader central elige Sheets en operacion estricta y los fixtures
+    # locales en QA/dry-run. Leer siempre Forecast_Configuracion rompia el
+    # contrato offline del middleware.
+    from core.forecast import cargar_parametros
+    params = cargar_parametros()
     return {linea: cfg["producto"] for linea, cfg in params["lineas"].items()}
 
 
 class Middleware:
     def __init__(self) -> None:
         self.odoo = OdooClient()
+        self.contabilidad = Contabilidad()
         self.linea_sku = _mapa_linea_sku()
         self.sku_linea = {v: k for k, v in self.linea_sku.items()}
         self._detener = False
         self._cliente = None          # para publicar ERP al UNS
+
+    def _persistir_produccion_externa(self, linea: str, sku: str,
+                                      cantidad_delta: float) -> None:
+        """Anexa el avance real a LibroProduccion usando costos de Sheets.
+
+        Para AvailableQuantity se recibe el delta validado, no el contador
+        absoluto, evitando duplicar unidades en el libro financiero.
+        """
+        if cantidad_delta <= 0:
+            return
+        try:
+            from core.finanzas_negocio import _maestro
+            self.contabilidad.registrar_produccion([{
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "linea": linea, "sku": sku, "qty": cantidad_delta,
+            }], _maestro().reset_index())
+        except Exception as exc:  # noqa: BLE001
+            state_store.log("sheets", "LibroProduccion ERROR", str(exc))
+            if settings.EXTERNAL_ONLY:
+                raise
+
+    def _persistir_kpi_externo(self, linea: str, rama: str, kpi: str,
+                               valor, topic: str) -> None:
+        try:
+            try:
+                numero, texto = float(valor), ""
+            except (TypeError, ValueError):
+                numero, texto = None, str(valor)
+            self.contabilidad.registrar_kpis_uns([{
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "linea": linea, "rama": rama, "kpi": kpi,
+                "valor_num": numero, "valor_txt": texto, "topic": topic,
+            }])
+        except Exception as exc:  # noqa: BLE001
+            state_store.log("sheets", "KPIs_UNS ERROR", str(exc))
+            if settings.EXTERNAL_ONLY:
+                raise
 
     # ------------------------------------------------------------- ERP -> UNS
     def publicar_estado_erp(self, linea: str) -> None:
@@ -97,12 +140,13 @@ class Middleware:
         retenido queda como 'CLOSED'/'COMPLETED' de la ultima que se hizo."""
         if self._cliente is None:
             return
-        sku = self.linea_sku.get(linea)
-        if not sku:
-            return
-        po = state_store.orden_activa(sku)
+        po = self.odoo.orden_activa_ulogix(linea)
         if po is None:
             return
+        po.setdefault("po_name", po["mo_name"])
+        po.setdefault("creado_ts", "")
+        po.setdefault("actualizado_ts", "")
+        po.setdefault("detalle", po.get("x_ulogix_mes") or "")
         try:
             uns.publicar_erp(self._cliente, linea, uns.erp_desde_po(po))
         except Exception as e:  # noqa: BLE001
@@ -118,11 +162,10 @@ class Middleware:
         excluye la que se acaba de cerrar)."""
         res = self.odoo.completar_orden_fabricacion(po.get("mo_id"), po.get("mo_name", ""))
         estado = "recibida_odoo" if res.get("ok") else "error"
-        state_store.marcar_po(po["po_name"], estado,
-                              res.get("detalle", res.get("modo", "")))
-        state_store.log("middleware", f"po_{estado}",
-                        f"{po['po_name']} cubierta por produccion de {sku} "
-                        f"(MO {po.get('mo_name') or '-'})")
+        if self.odoo.dry_run:
+            state_store.marcar_po(po["po_name"], estado)
+        state_store.log("middleware", f"mo_{estado}",
+                        f"{po.get('mo_name')} cubierta por produccion de {sku}")
         self.publicar_estado_erp(linea)
 
     def sincronizar_parciales_odoo(self) -> None:
@@ -137,17 +180,17 @@ class Middleware:
         en CLAUDE.md. El cierre FINAL de cada orden lo sigue haciendo
         `_completar_orden`/`completar_orden_fabricacion` (sin backorder,
         cubre todo lo que reste)."""
-        for po in state_store.pos_para_sincronizar_odoo():
+        for po in self.odoo.listar_mo_ulogix_activas():
             delta = po["qty_producida"] - po["qty_sincronizada_odoo"]
             if delta <= 0 or not po.get("mo_id"):
                 continue
             res = self.odoo.avanzar_produccion_parcial(po["mo_id"], po.get("mo_name", ""),
                                                         delta)
             if res.get("ok"):
-                state_store.marcar_sincronizado_odoo(
-                    po["po_name"], po["qty_producida"],
-                    res.get("mo_id_nuevo", po["mo_id"]),
-                    res.get("mo_name_nuevo", po.get("mo_name", "")))
+                nuevo_id = res.get("mo_id_nuevo", po["mo_id"])
+                nuevo_nombre = res.get("mo_name_nuevo", po.get("mo_name", ""))
+                self.odoo.heredar_trazabilidad_backorder(
+                    po, nuevo_id, nuevo_nombre, po["qty_producida"])
             else:
                 state_store.log("odoo", "sync_parcial_odoo ERROR",
                                 f"{po['po_name']}: {res.get('detalle')}")
@@ -159,10 +202,13 @@ class Middleware:
         state_store.registrar_evento(linea, sku, disponible, topic=topic,
                                      payload=payload if isinstance(payload, dict)
                                      else {"value": payload})
-        completada = state_store.actualizar_disponible(sku, disponible)
-        if completada:
-            self._completar_orden(linea, sku, completada)
-            return [completada]
+        actualizada = self.odoo.actualizar_disponible_ulogix(linea, disponible)
+        if actualizada is None:
+            return []
+        self._persistir_produccion_externa(linea, sku, actualizada["delta"])
+        if actualizada["completada"]:
+            self._completar_orden(linea, sku, actualizada)
+            return [actualizada]
         return []
 
     def _procesar_produccion(self, linea: str, sku: str, qty: float,
@@ -172,13 +218,11 @@ class Middleware:
         (tools/simulador_produccion.py, boton de prueba de la pagina
         Produccion MQTT), pero el camino principal en produccion es
         `AvailableQuantity` (ver `_procesar_disponible`)."""
-        state_store.registrar_evento(linea, sku, qty, topic=topic,
-                                     payload=payload if isinstance(payload, dict)
-                                     else {"value": payload})
-        completadas = state_store.acumular_produccion(sku, qty, linea)
-        for po in completadas:
-            self._completar_orden(linea, sku, po)
-        return completadas
+        activa = self.odoo.orden_activa_ulogix(linea)
+        if activa is None:
+            return []
+        return self._procesar_disponible(
+            linea, sku, float(activa["qty_producida"]) + qty, topic, payload)
 
     def manejar_mensaje(self, topic: str, raw: bytes | str) -> list[dict]:
         # ---------- 1) topicos del UNS
@@ -200,12 +244,16 @@ class Middleware:
             if info["rama"].startswith("MES"):
                 state_store.registrar_kpi(info["linea"], info["rama"],
                                           info["hoja"], valor, topic)
+                self._persistir_kpi_externo(info["linea"], info["rama"],
+                                             info["hoja"], valor, topic)
                 return []
             if info["rama"].startswith("Process") or info["rama"] == "Process" \
                     or info["hoja"].lower() in uns.HOJAS_PRODUCCION:
                 if info["hoja"].lower() not in uns.HOJAS_PRODUCCION:
                     state_store.registrar_kpi(info["linea"], "Process",
                                               info["hoja"], valor, topic)
+                    self._persistir_kpi_externo(info["linea"], "Process",
+                                                 info["hoja"], valor, topic)
                     return []
                 try:
                     qty = float(valor)

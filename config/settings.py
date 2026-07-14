@@ -66,6 +66,7 @@ MC_N_INVENTARIO = int(_get("MC_N_INVENTARIO", "300") or 300)
 SEMILLA = int(_get("SEMILLA", "42") or 42)
 
 DRY_RUN_FORZADO = _get_bool("DRY_RUN", False)  # fuerza dry-run aunque haya credenciales
+EXTERNAL_ONLY = _get_bool("EXTERNAL_ONLY", False)
 
 def resumen_conexiones() -> dict:
     """Estado de integraciones para mostrar en el dashboard."""

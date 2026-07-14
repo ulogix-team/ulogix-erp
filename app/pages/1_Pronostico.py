@@ -74,6 +74,19 @@ fig = go.Figure()
 mensual = mensual.copy()
 mensual["fecha"] = pd.to_datetime(dict(year=mensual["ano"],
                                        month=mensual["mes"].map(MES_NUM), day=1))
+mensual = mensual.sort_values("fecha").reset_index(drop=True)
+hist_m = hist_m.copy()
+hist_m["fecha"] = pd.to_datetime(hist_m["fecha"], errors="raise")
+hist_m["unidades"] = pd.to_numeric(hist_m["unidades"], errors="raise")
+hist_m = hist_m.sort_values(["producto", "fecha"]).reset_index(drop=True)
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    color = hex_color.lstrip("#")
+    r, g, b = (int(color[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 for sku in sel:
     p = PROD_DE[sku]
     h = hist_m[hist_m["producto"] == p]
@@ -86,10 +99,9 @@ for sku in sel:
                              showlegend=False, hoverinfo="skip"))
     fig.add_trace(go.Scatter(x=mensual["fecha"], y=mensual[f"{sku}_p05"],
                              mode="lines", line=dict(width=0), fill="tonexty",
-                             fillcolor=c.replace("rgb", "rgba").replace(")", ",0.15)")
-                             if c.startswith("rgb") else None,
+                             fillcolor=_rgba(c, 0.16),
                              name=f"{NOMBRE_CORTO[sku]} · banda 90%",
-                             opacity=0.3, showlegend=False, hoverinfo="skip"))
+                             showlegend=False, hoverinfo="skip"))
     fig.add_trace(go.Scatter(x=mensual["fecha"], y=mensual[f"{sku}_unidades"],
                              mode="lines+markers",
                              name=f"{NOMBRE_CORTO[sku]} · pronostico",
@@ -101,6 +113,7 @@ fig.add_annotation(x=pd.Timestamp("2026-03-15"), y=1.02, yref="paper",
                    font=dict(size=11, color=COL["texto2"]))
 if escala_log:
     fig.update_yaxes(type="log")
+fig.update_xaxes(type="date", tickformat="%b\n%Y", dtick="M6")
 theme.plotly_layout(fig, "Unidades/mes · ene-2021 → mar-2027")
 st.plotly_chart(fig, width="stretch")
 st.caption("Historico: reconstruccion a escala planta de los 21 trimestres reales "

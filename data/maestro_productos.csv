@@ -1,4 +1,4 @@
 sku,nombre,linea,ean13,litros_por_unidad,unidades_por_caja,cajas_por_pallet,precio_venta_cop,costo_material_cop,categoria,participacion_categoria
-P1-CC350-RGB,Coca-Cola 350 ml vidrio retornable,L1,7701234000103,0.35,30,54,2200.0,929.0,carbonatadas,0.062
-P2-QT1500-PET,QuAtro 1.5 L PET no retornable,L2,7701234000271,1.5,6,140,5200.0,2670.0,carbonatadas,0.021
-P3-GARR25L,Garrafon agua 25 L retornable,L3,7701234000349,25.0,6,5,10500.0,6942.86,garrafon,0.185
+P1-CC350-RGB,Coca-Cola 350 ml vidrio retornable,L1,7701234000103,0.35,30,54,1800.0,929.0,carbonatadas,0.062
+P2-QT1500-PET,QuAtro 1.5 L PET no retornable,L2,7701234000271,1.5,6,140,4250.0,2670.0,carbonatadas,0.021
+P3-GARR25L,Garrafon agua 25 L retornable,L3,7701234000349,25.0,6,5,12000.0,6942.86,garrafon,0.185
