@@ -342,6 +342,14 @@ nombres de servicio.
       CAPEX (`FASES_CAPEX`): el +5% se completa al cierre del mes 4, justo
       antes de la rampa del mes 5. La meta aspiracional de programa (≥86%)
       queda documentada aparte, sin confundirse con el +5% estricto.
+    - **Sección post-OEE en `Tiempos`** (`tabla_tiempos_post_oee()` y bloque
+      8 de `tools/actualizar_tiempos_oee.py`): muestra por L1/L2/L3 el ciclo
+      ideal de la máquina, ciclo efectivo tras pérdidas OEE, takt de demanda,
+      margen ciclo–takt, throughput, horas requeridas/holgura, utilización,
+      lote, tiempo de lote y MLT proyectado. No mezclar conceptos: el OEE
+      mejora el ciclo efectivo y el throughput; el takt sigue gobernado por
+      demanda y calendario. El criterio de factibilidad es ciclo efectivo
+      `<=` takt (equivalente a utilización `<= 100%`).
     - **RRHH centralizado en una sola hoja `RRHH`** (antes `Personal` +
       `Empleados` separadas, ver decisión #10 — la separación conceptual
       detalle/agregado se mantiene, ahora en secciones de la misma hoja:

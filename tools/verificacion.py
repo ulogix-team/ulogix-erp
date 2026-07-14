@@ -192,8 +192,9 @@ def _erp():
 @paso("13. Tiempos y OEE (+5% justificado)")
 def _toee():
     from core.tiempos_oee import (tabla_capacidad_comparada, tabla_oee,
-                                  tabla_tiempos)
+                                  tabla_tiempos, tabla_tiempos_post_oee)
     t, o, c = tabla_tiempos(), tabla_oee(), tabla_capacidad_comparada()
+    post = tabla_tiempos_post_oee()
     assert len(t) == 3 and t["pallets_por_lote"].tolist() == [162, 87, 96]
     assert int(t.loc[t.linea == "L1", "q_lote_turno_und"].iloc[0]) == 262440
     assert abs(o.loc[o.linea == "L1", "oee_base"].iloc[0] - 0.7712) < 1e-3
@@ -202,9 +203,18 @@ def _toee():
     assert c.set_index("linea").loc["L3", "rp_despues_uph"] == 600
     assert (c["U_antes"] > 1).tolist() == [True, True, False]
     assert (c["U_despues"] <= 1).all()
+    assert len(post) == 3 and (post["dictamen"] == "Factible").all()
+    assert (post["ciclo_efectivo_oee_s"] >
+            post["ciclo_ideal_despues_s"]).all()
+    assert (post["takt_demanda_s"] >= post["ciclo_efectivo_oee_s"]).all()
+    for linea in ("L1", "L2", "L3"):
+        u_post = float(post.loc[post.linea == linea, "utilizacion"].iloc[0])
+        u_cap = float(c.loc[c.linea == linea, "U_despues"].iloc[0])
+        assert abs(u_post - u_cap) < 1e-3
     return (f"lotes {t['pallets_por_lote'].tolist()} pallets · OEE base "
             f"{o['oee_base'].tolist()} · utilización antes→después "
-            f"{c['U_antes'].tolist()}→{c['U_despues'].tolist()}")
+            f"{c['U_antes'].tolist()}→{c['U_despues'].tolist()} · "
+            f"post-OEE {post['dictamen'].tolist()}")
 
 
 @paso("14. Caso de negocio (ROI/VPN/TIR)")

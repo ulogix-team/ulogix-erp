@@ -260,6 +260,61 @@ def tabla_tiempos(demanda_mensual: pd.DataFrame | None = None,
     return pd.DataFrame(filas)
 
 
+def tabla_tiempos_post_oee(
+        demanda_mensual: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Tiempos del estado DESPUES, tras aplicar la mejora de OEE.
+
+    Distingue tres conceptos que no se deben mezclar:
+    - ciclo ideal: capacidad nominal del equipo, independiente del OEE;
+    - ciclo efectivo: ciclo ideal / OEE, incorpora las perdidas agregadas;
+    - takt: tiempo programado / demanda, independiente del OEE.
+
+    ``ciclo_efectivo <= takt`` equivale a utilización <= 100 % bajo el mismo
+    calendario y permite leer la factibilidad directamente en segundos/unidad.
+    """
+    tiempos = tabla_tiempos(demanda_mensual, "despues").set_index("linea")
+    capacidad = tabla_capacidad(demanda_mensual, "despues").set_index("linea")
+    filas = []
+    for lin in LINEAS:
+        d = _datos_estado(lin, "despues")
+        t = tiempos.loc[lin]
+        demanda = float(capacidad.loc[lin, "demanda_2026_und"])
+        oee = float(capacidad.loc[lin, "oee_aplicado"])
+        programado_h = d["turnos"] * d["horas_turno"] * d["dias_ano"]
+        ciclo_ideal = 3600 / d["rp_nominal"]
+        ciclo_efectivo = ciclo_ideal / oee
+        takt = programado_h * 3600 / max(demanda, 1)
+        throughput = d["rp_nominal"] * oee
+        requerido_h = demanda / throughput
+        utilizacion = requerido_h / programado_h
+        filas.append(dict(
+            linea=lin,
+            producto=d["producto"],
+            equipo_despues=d["equipo_critico"],
+            rp_despues_uph=d["rp_nominal"],
+            oee_despues=round(oee, 4),
+            demanda_anual_und=round(demanda),
+            turnos_despues=d["turnos"],
+            horas_turno=d["horas_turno"],
+            dias_operativos_ano=d["dias_ano"],
+            tiempo_programado_anual_h=round(programado_h, 2),
+            ciclo_ideal_despues_s=round(ciclo_ideal, 4),
+            ciclo_efectivo_oee_s=round(ciclo_efectivo, 4),
+            takt_demanda_s=round(takt, 4),
+            margen_takt_s=round(takt - ciclo_efectivo, 4),
+            throughput_efectivo_uph=round(throughput, 2),
+            tiempo_requerido_demanda_h=round(requerido_h, 2),
+            holgura_anual_h=round(programado_h - requerido_h, 2),
+            utilizacion=round(utilizacion, 4),
+            q_lote_despues_und=int(t["q_lote_turno_und"]),
+            tb_lote_despues_h=float(t["tb_lote_h"]),
+            tp_setup_s_por_und=float(t["tp_s_por_und"]),
+            mlt_despues_h=float(t["mlt_lote_h"]),
+            dictamen=("Factible" if ciclo_efectivo <= takt else "INFACTIBLE"),
+        ))
+    return pd.DataFrame(filas)
+
+
 def tabla_oee() -> pd.DataFrame:
     """OEE bottom-up (documental) + mejora +5% relativo EXACTO por linea
     (no una cifra plana) + meta aspiracional 86% (largo plazo, distinta del

@@ -30,7 +30,8 @@ from core.tiempos_oee import (DATOS, DATOS_DESPUES, MAQUINAS_ESTADO, LINEAS,
                               CRONOGRAMA_MEJORA_OEE,
                               componentes_oee, tabla_capacidad,
                               tabla_capacidad_comparada, tabla_oee,
-                              tabla_tiempos, _mejora_pp_linea)
+                              tabla_tiempos, tabla_tiempos_post_oee,
+                              _mejora_pp_linea)
 
 FUENTE_XLSX = r"c:\Users\samue\Downloads\Repo\Tiempos_Fontibon_Corregido.xlsx"
 
@@ -190,8 +191,37 @@ def _filas_capacidad() -> list[list]:
     return out
 
 
+def _filas_tiempos_post_oee() -> list[list]:
+    out = [_fila_ancha(
+        "BLOQUE 8 · TIEMPOS DESPUÉS DE LA MEJORA OEE — ciclo ideal, ciclo "
+        "efectivo, takt, lote, MLT y holgura de capacidad"),
+        _fila_ancha(
+            "Ciclo ideal = 3600/tasa nominal (lo define la máquina). Ciclo "
+            "efectivo = ciclo ideal/OEE después (incluye pérdidas agregadas). "
+            "Takt = tiempo programado/demanda (NO depende del OEE)."),
+        _fila_ancha(
+            "Criterio: ciclo efectivo <= takt equivale a utilización <= 100%. "
+            "MLT después es proyectado y debe sustituirse con la medición de "
+            "SAT/comisionamiento.")]
+    cols = [
+        "linea", "producto", "equipo_despues", "rp_despues_uph",
+        "oee_despues", "demanda_anual_und", "turnos_despues", "horas_turno",
+        "dias_operativos_ano", "tiempo_programado_anual_h",
+        "ciclo_ideal_despues_s", "ciclo_efectivo_oee_s", "takt_demanda_s",
+        "margen_takt_s", "throughput_efectivo_uph",
+        "tiempo_requerido_demanda_h", "holgura_anual_h", "utilizacion",
+        "q_lote_despues_und", "tb_lote_despues_h", "tp_setup_s_por_und",
+        "mlt_despues_h", "dictamen",
+    ]
+    out.append(_fila_ancha(*cols, n=len(cols)))
+    tabla = tabla_tiempos_post_oee()
+    for _, row in tabla.iterrows():
+        out.append(_fila_ancha(*[row[c] for c in cols], n=len(cols)))
+    return out
+
+
 def _filas_maquinas(src) -> list[list]:
-    out = [_fila_ancha("BLOQUE 8 · MÁQUINAS Y REFERENCIAS COMERCIALES POR ETAPA "
+    out = [_fila_ancha("BLOQUE 9 · MÁQUINAS Y REFERENCIAS COMERCIALES POR ETAPA "
                        "(tasas de catálogo/mercado de usados, referencia real)")]
     df = src["Maquinas_Referencias"]
     for _, row in df.iterrows():
@@ -218,13 +248,13 @@ def _filas_maquinas(src) -> list[list]:
 
 
 def _filas_glosario_referencias(src) -> list[list]:
-    out = [_fila_ancha("BLOQUE 9 · GLOSARIO")]
+    out = [_fila_ancha("BLOQUE 10 · GLOSARIO")]
     for _, row in src["Glosario"].iterrows():
         vals = [str(row[i]) if len(row) > i and str(row[i]) != "nan" else "" for i in range(3)]
         if vals[1]:
             out.append(_fila_ancha(vals[1], vals[2] if len(vals) > 2 else "", n=2))
     out.append(_fila_ancha(""))
-    out.append(_fila_ancha("BLOQUE 10 · REFERENCIAS Y CITAS"))
+    out.append(_fila_ancha("BLOQUE 11 · REFERENCIAS Y CITAS"))
     for _, row in src["Referencias"].iterrows():
         vals = [str(row[i]) if len(row) > i and str(row[i]) != "nan" else "" for i in range(3)]
         if vals[1]:
@@ -255,6 +285,7 @@ def construir_filas() -> tuple[list[list], list[int]]:
               _filas_oee(), [_fila_ancha("")],
               _filas_mejora_5pct(), [_fila_ancha("")],
               _filas_capacidad(), [_fila_ancha("")],
+              _filas_tiempos_post_oee(), [_fila_ancha("")],
               _filas_maquinas(src), [_fila_ancha("")],
               _filas_glosario_referencias(src)]
     titulos_idx = []
@@ -281,7 +312,7 @@ def _fila_encabezado(filas: list[list], columnas: list[str]) -> int:
 
 
 def _convertir_calculos_a_formulas(filas: list[list]) -> None:
-    """Convierte los cuatro bloques cuantitativos en un modelo vivo.
+    """Convierte los cinco bloques cuantitativos en un modelo vivo.
 
     Las tasas, turnos, calendario, microparos, calidad, tiempos de parada,
     pallets y unidades/pallet siguen siendo entradas editables. Todo valor
@@ -293,13 +324,17 @@ def _convertir_calculos_a_formulas(filas: list[list]) -> None:
     h_m = _fila_encabezado(filas, ["linea", "oee_base", "oee_a_implementar"])
     h_c = _fila_encabezado(filas, ["linea", "demanda_anual_und",
                                    "equipo_antes", "equipo_despues"])
+    h_p = _fila_encabezado(filas, ["linea", "producto", "equipo_despues",
+                                   "rp_despues_uph", "oee_despues"])
     demanda_col = {"L1": "D", "L2": "E", "L3": "F"}
 
     for offset in range(1, 4):
-        rt, ro, rm, rc = (h_t + offset + 1, h_o + offset + 1,
-                          h_m + offset + 1, h_c + offset + 1)
-        ft, fo, fm, fc = (filas[h_t + offset], filas[h_o + offset],
-                          filas[h_m + offset], filas[h_c + offset])
+        rt, ro, rm, rc, rp = (h_t + offset + 1, h_o + offset + 1,
+                              h_m + offset + 1, h_c + offset + 1,
+                              h_p + offset + 1)
+        ft, fo, fm, fc, fp = (filas[h_t + offset], filas[h_o + offset],
+                              filas[h_m + offset], filas[h_c + offset],
+                              filas[h_p + offset])
         linea = str(ft[0])
 
         # Bloque 3: estudio de tiempos.
@@ -349,6 +384,30 @@ def _convertir_calculos_a_formulas(filas: list[list]) -> None:
         fc[23] = f'=IF(U{rc}>1;"INFACTIBLE";"Factible")'
         fc[24] = f'=IF(V{rc}>1;"INFACTIBLE";"Factible")'
 
+        # Bloque 8: tiempos DESPUES de la mejora OEE. El ciclo ideal depende
+        # de la maquina; el ciclo efectivo incorpora OEE; el takt depende de
+        # demanda/calendario y por definicion NO cambia por mejorar el OEE.
+        fp[3] = f"=F{rc}"
+        fp[4] = f"=C{rm}"
+        fp[5] = f"=SUM(Demanda!{dc}$5:{dc}$16)"
+        fp[6] = f"=L{rc}"
+        fp[7] = f"=G{rt}"
+        fp[8] = f"=M{rc}"
+        fp[9] = f"=G{rp}*H{rp}*I{rp}"
+        fp[10] = f"=3600/D{rp}"
+        fp[11] = f"=K{rp}/E{rp}"
+        fp[12] = f"=J{rp}*3600/F{rp}"
+        fp[13] = f"=M{rp}-L{rp}"
+        fp[14] = f"=D{rp}*E{rp}"
+        fp[15] = f"=F{rp}/O{rp}"
+        fp[16] = f"=J{rp}-P{rp}"
+        fp[17] = f"=P{rp}/J{rp}"
+        fp[18] = f"=O{rc}"
+        fp[19] = f"=I{rt}/60+S{rp}*K{rp}/3600"
+        fp[20] = f"=T{rp}*3600/S{rp}"
+        fp[21] = f"=Q{rc}"
+        fp[22] = f'=IF(L{rp}<=M{rp};"Factible";"INFACTIBLE")'
+
     # Bloque 4: conversion h→s y MLT a partir del VSM editable.
     for inicio, fin, resumen, rt in ((47, 55, 56, 37), (59, 68, 69, 38),
                                      (72, 78, 79, 39)):
@@ -362,6 +421,157 @@ def _convertir_calculos_a_formulas(filas: list[list]) -> None:
         if len(fila) > 3 and isinstance(fila[2], (int, float)):
             if 115 <= i <= 136:
                 fila[3] = f"=3600/C{i}"
+
+
+def _buscar_encabezado_hoja(valores: list[list], columnas: list[str]) -> int:
+    """Fila 1-based de un encabezado ya publicado en Google Sheets."""
+    for i, fila in enumerate(valores, start=1):
+        if fila[:len(columnas)] == columnas:
+            return i
+    raise ValueError(f"No se encontro en Tiempos el encabezado {columnas}")
+
+
+def _buscar_prefijo_hoja(valores: list[list], prefijo: str) -> int | None:
+    for i, fila in enumerate(valores, start=1):
+        if fila and str(fila[0]).startswith(prefijo):
+            return i
+    return None
+
+
+def _bloque_post_oee_para_hoja(h_t: int, h_m: int, h_c: int,
+                                inicio: int) -> list[list]:
+    """Bloque formula-backed para insertar sin reconstruir toda Tiempos."""
+    bloque = _filas_tiempos_post_oee()
+    ancho = 23
+    bloque = [fila + [""] * (ancho - len(fila)) for fila in bloque]
+    demanda_col = {"L1": "D", "L2": "E", "L3": "F"}
+    for offset in range(3):
+        rt, rm, rc = h_t + 1 + offset, h_m + 1 + offset, h_c + 1 + offset
+        rp = inicio + 4 + offset  # titulo + 2 notas + encabezado
+        fila = bloque[4 + offset]
+        linea = str(fila[0])
+        dc = demanda_col[linea]
+        fila[3] = f"=F{rc}"
+        fila[4] = f"=C{rm}"
+        fila[5] = f"=SUM(Demanda!{dc}$5:{dc}$16)"
+        fila[6] = f"=L{rc}"
+        fila[7] = f"=G{rt}"
+        fila[8] = f"=M{rc}"
+        fila[9] = f"=G{rp}*H{rp}*I{rp}"
+        fila[10] = f"=3600/D{rp}"
+        fila[11] = f"=K{rp}/E{rp}"
+        fila[12] = f"=J{rp}*3600/F{rp}"
+        fila[13] = f"=M{rp}-L{rp}"
+        fila[14] = f"=D{rp}*E{rp}"
+        fila[15] = f"=F{rp}/O{rp}"
+        fila[16] = f"=J{rp}-P{rp}"
+        fila[17] = f"=P{rp}/J{rp}"
+        fila[18] = f"=O{rc}"
+        fila[19] = f"=I{rt}/60+S{rp}*K{rp}/3600"
+        fila[20] = f"=T{rp}*3600/S{rp}"
+        fila[21] = f"=Q{rc}"
+        fila[22] = f'=IF(L{rp}<=M{rp};"Factible";"INFACTIBLE")'
+    bloque.append([""] * ancho)
+    return bloque
+
+
+def _formatear_bloque_post_oee(ws, inicio: int) -> None:
+    encabezado, r_ini, r_fin = inicio + 3, inicio + 4, inicio + 6
+    ws.format(f"A{inicio}:W{inicio}", FMT_BLOQUE)
+    ws.format(f"A{encabezado}:W{encabezado}", FMT_ENCAB)
+    ws.format(f"D{r_ini}:D{r_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "#,##0"}})
+    ws.format(f"E{r_ini}:E{r_fin}",
+              {"numberFormat": {"type": "PERCENT", "pattern": "0.00%"}})
+    ws.format(f"F{r_ini}:J{r_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}})
+    ws.format(f"K{r_ini}:N{r_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "0.0000"}})
+    ws.format(f"O{r_ini}:Q{r_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}})
+    ws.format(f"R{r_ini}:R{r_fin}",
+              {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
+    ws.format(f"S{r_ini}:S{r_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "#,##0"}})
+    ws.format(f"T{r_ini}:V{r_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "0.000"}})
+
+
+def _publicar_resumen_post_oee(ss, inicio_tiempos: int) -> None:
+    try:
+        wr = ss.worksheet("Tiempos_Resumen")
+    except Exception:  # noqa: BLE001
+        wr = ss.add_worksheet("Tiempos_Resumen", rows=50, cols=16)
+    valores = wr.get_all_values()
+    inicio = _buscar_prefijo_hoja(valores, "TIEMPOS DESPUÉS DE LA MEJORA OEE")
+    if inicio is None:
+        inicio = len(valores) + 2
+    filas = [["TIEMPOS DESPUÉS DE LA MEJORA OEE", "", "", "", "", "", "", ""],
+             ["El takt depende de demanda/calendario; el OEE modifica el ciclo efectivo, no el takt.", "", "", "", "", "", "", ""],
+             ["linea", "ciclo ideal s/u", "ciclo efectivo OEE s/u",
+              "takt demanda s/u", "margen takt s/u", "MLT después h",
+              "utilización", "dictamen"]]
+    for r in range(inicio_tiempos + 4, inicio_tiempos + 7):
+        filas.append([f"=Tiempos!A{r}", f"=Tiempos!K{r}", f"=Tiempos!L{r}",
+                      f"=Tiempos!M{r}", f"=Tiempos!N{r}", f"=Tiempos!V{r}",
+                      f"=Tiempos!R{r}", f"=Tiempos!W{r}"])
+    wr.resize(rows=max(wr.row_count, inicio + len(filas) + 5),
+              cols=max(wr.col_count, 16))
+    wr.batch_clear([f"A{inicio}:H{inicio + len(filas) - 1}"])
+    wr.update(filas, f"A{inicio}", value_input_option="USER_ENTERED")
+    wr.format(f"A{inicio}:H{inicio}", FMT_BLOQUE)
+    wr.format(f"A{inicio+2}:H{inicio+2}", FMT_ENCAB)
+    wr.format(f"B{inicio+3}:F{inicio+5}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "0.0000"}})
+    wr.format(f"G{inicio+3}:G{inicio+5}",
+              {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
+
+
+def publicar_solo_tiempos_post_oee() -> None:
+    """Inserta/actualiza solo el nuevo bloque, preservando el resto del libro."""
+    cont = Contabilidad()
+    if cont.modo != "sheets":
+        raise SystemExit("Sheets no esta configurado (.env).")
+    ss = cont._spreadsheet()
+    ws = ss.worksheet("Tiempos")
+    valores = ws.get_all_values()
+    h_t = _buscar_encabezado_hoja(
+        valores, ["linea", "producto", "rp_nominal_uph"])
+    h_m = _buscar_encabezado_hoja(
+        valores, ["linea", "oee_base", "oee_a_implementar"])
+    h_c = _buscar_encabezado_hoja(
+        valores, ["linea", "demanda_anual_und", "equipo_antes", "equipo_despues"])
+    inicio = _buscar_prefijo_hoja(
+        valores, "BLOQUE 8 · TIEMPOS DESPUÉS DE LA MEJORA OEE")
+    nuevo = inicio is None
+    if nuevo:
+        inicio = (_buscar_prefijo_hoja(
+            valores, "BLOQUE 8 · MÁQUINAS Y REFERENCIAS") or len(valores) + 2)
+    bloque = _bloque_post_oee_para_hoja(h_t, h_m, h_c, inicio)
+    if nuevo:
+        ws.insert_rows([[""] * 23 for _ in bloque], row=inicio,
+                       value_input_option="RAW")
+    else:
+        ws.batch_clear([f"A{inicio}:W{inicio + len(bloque) - 1}"])
+    ws.update(bloque, f"A{inicio}", value_input_option="USER_ENTERED")
+    _formatear_bloque_post_oee(ws, inicio)
+
+    # Renumera los bloques documentales posteriores solo en la primera inserción.
+    if nuevo:
+        posteriores = ws.get_all_values()
+        cambios = {
+            "BLOQUE 8 · MÁQUINAS": "BLOQUE 9 · MÁQUINAS",
+            "BLOQUE 9 · GLOSARIO": "BLOQUE 10 · GLOSARIO",
+            "BLOQUE 10 · REFERENCIAS": "BLOQUE 11 · REFERENCIAS",
+        }
+        for prefijo, reemplazo in cambios.items():
+            fila = _buscar_prefijo_hoja(posteriores, prefijo)
+            if fila:
+                actual = posteriores[fila - 1][0]
+                ws.update_acell(f"A{fila}", actual.replace(prefijo, reemplazo, 1))
+
+    _publicar_resumen_post_oee(ss, inicio)
+    print(f"Publicado bloque post-OEE en Tiempos!A{inicio}:W{inicio+6} y resumen.")
 
 
 def main() -> None:
@@ -402,6 +612,29 @@ def main() -> None:
               {"numberFormat": {"type": "NUMBER", "pattern": "#,##0"}})
     ws.format(f"U{r_ini}:W{r_fin}",
               {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
+
+    # Bloque 8: tiempos después del OEE, con precisión suficiente para que
+    # ciclo ideal/efectivo y takt no se vean iguales por redondeo.
+    h_post = _fila_encabezado(
+        filas, ["linea", "producto", "equipo_despues", "rp_despues_uph",
+                "oee_despues"]) + 1
+    p_ini, p_fin = h_post + 1, h_post + 3
+    ws.format(f"D{p_ini}:D{p_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "#,##0"}})
+    ws.format(f"E{p_ini}:E{p_fin}",
+              {"numberFormat": {"type": "PERCENT", "pattern": "0.00%"}})
+    ws.format(f"F{p_ini}:J{p_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}})
+    ws.format(f"K{p_ini}:N{p_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "0.0000"}})
+    ws.format(f"O{p_ini}:Q{p_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}})
+    ws.format(f"R{p_ini}:R{p_fin}",
+              {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
+    ws.format(f"S{p_ini}:S{p_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "#,##0"}})
+    ws.format(f"T{p_ini}:V{p_fin}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "0.000"}})
     ws.freeze(rows=2)
 
     # Vista corta y legible: Tiempos conserva la auditoria completa; esta
@@ -423,6 +656,18 @@ def main() -> None:
                 ["L1", "Encajonadora 30x30 + llenadora KRONES usada 44k + GANTRY compartido"],
                 ["L2", "Llenadora KRONES usada 18k + Variopac + el mismo GANTRY alternado con L1"],
                 ["L3", "Solo celda robotica; llenadora existente 600 gfn/h es suficiente"]]
+    resumen += [[], ["TIEMPOS DESPUÉS DE LA MEJORA OEE"],
+                ["El takt depende de demanda/calendario; el OEE modifica el ciclo efectivo, no el takt."],
+                ["linea", "ciclo ideal s/u", "ciclo efectivo OEE s/u",
+                 "takt demanda s/u", "margen takt s/u", "MLT después h",
+                 "utilización", "dictamen"]]
+    for r_tiempos in range(p_ini, p_fin + 1):
+        resumen.append([
+            f"=Tiempos!A{r_tiempos}", f"=Tiempos!K{r_tiempos}",
+            f"=Tiempos!L{r_tiempos}", f"=Tiempos!M{r_tiempos}",
+            f"=Tiempos!N{r_tiempos}", f"=Tiempos!V{r_tiempos}",
+            f"=Tiempos!R{r_tiempos}", f"=Tiempos!W{r_tiempos}",
+        ])
     try:
         wr = ss.worksheet("Tiempos_Resumen")
     except Exception:  # noqa: BLE001
@@ -431,6 +676,15 @@ def main() -> None:
     wr.format("A1:N1", FMT_TITULO); wr.format("A4:N4", FMT_ENCAB)
     wr.format("G5:H7", {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
     wr.format("L5:M7", {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
+    h_res_post = _fila_encabezado(
+        resumen, ["linea", "ciclo ideal s/u", "ciclo efectivo OEE s/u",
+                  "takt demanda s/u"]) + 1
+    wr.format(f"A{h_res_post-2}:H{h_res_post-2}", FMT_BLOQUE)
+    wr.format(f"A{h_res_post}:H{h_res_post}", FMT_ENCAB)
+    wr.format(f"B{h_res_post+1}:F{h_res_post+3}",
+              {"numberFormat": {"type": "NUMBER", "pattern": "0.0000"}})
+    wr.format(f"G{h_res_post+1}:G{h_res_post+3}",
+              {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
     wr.freeze(rows=4, cols=1)
 
     print(f"Publicado 'Tiempos': {len(filas)} filas x {ancho} columnas, "
@@ -453,4 +707,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--solo-post-oee", action="store_true",
+        help="Inserta solo la sección de tiempos después del OEE, sin reconstruir la hoja.")
+    args = parser.parse_args()
+    if args.solo_post_oee:
+        publicar_solo_tiempos_post_oee()
+    else:
+        main()
